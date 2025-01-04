@@ -75,6 +75,9 @@ struct MaxRecordsView: View {
     // 1. 添加缓存键常量
     private let PR_CACHE_KEY = "cachedPRRecords"
     
+    // 在 MaxRecordsView 中添加状态来追踪 sheet 的显示
+    @State private var isSheetPresented = false
+    
     init() {
         setupFirestore()
     }
@@ -108,6 +111,11 @@ struct MaxRecordsView: View {
     
     // 修改刷新函数
     private func refresh() {
+        // 如果是从 sheet 关闭触发的,不执行刷新
+        if isSheetPresented {
+            return
+        }
+        
         if !canRefresh() {
             showRefreshLimitAlert = true
             return
@@ -117,17 +125,15 @@ struct MaxRecordsView: View {
             isRefreshing = true
             isFirstLoading = true
             
-            // 重新加载数据
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     await loadExercises()
                 }
                 group.addTask {
-                    await loadRecentPRs()  // 这里会自动更新缓存
+                    await loadRecentPRs()
                 }
             }
             
-            // 更新刷新时间和同步状态
             lastRefreshTime = Date().timeIntervalSince1970
             lastSyncDate = Date()
             updateLastSyncTime()
@@ -340,11 +346,16 @@ struct MaxRecordsView: View {
                 selectedPRCategory = nil
             }
             .sheet(isPresented: $showingProjectSheet) {
+                isSheetPresented = false // sheet 关闭时更新状态
+            } content: {
                 ProjectManagementSheet(
                     exercises: $exercises,
                     showSystemExercises: $showSystemExercises,
                     showCustomExercises: $showCustomExercises
                 )
+                .onAppear {
+                    isSheetPresented = true // sheet 显示时更新状态
+                }
             }
         }
     }
@@ -2013,14 +2024,15 @@ struct RefreshControl: View {
     @Binding var isRefreshing: Bool
     let action: () -> Void
     let lastSyncTimeString: String
+    @State private var hasTriggeredRefresh = false // 添加状态追踪是否已触发刷新
     
     var body: some View {
         GeometryReader { geometry in
             let minY = geometry.frame(in: .global).minY
-            let threshold: CGFloat = 150  // 增加阈值
-            let triggerThreshold: CGFloat = 100  // 添加触发阈值
+            let threshold: CGFloat = 180  // 增加阈值，让下拉不那么敏感
+            let triggerThreshold: CGFloat = 120  // 增加触发阈值
             
-            if minY > triggerThreshold {  // 只有超过触发阈值才显示
+            if minY > triggerThreshold {
                 VStack(spacing: 8) {
                     if isRefreshing {
                         HStack(spacing: 8) {
@@ -2031,9 +2043,8 @@ struct RefreshControl: View {
                                 .font(.system(size: 14))
                         }
                     } else {
-                        // 移除箭头，只显示文字
                         Text(lastSyncTimeString == "未同步" ? 
-                            "未同步，下拉刷新" : 
+                            "下拉刷新" : 
                             "上次同步：\(lastSyncTimeString)")
                             .font(.system(size: 14))
                             .foregroundColor(.secondary)
@@ -2043,14 +2054,20 @@ struct RefreshControl: View {
                 .offset(y: -minY + (isRefreshing ? 80 : 60))
                 .opacity(isRefreshing ? 1 : min(1, (minY - triggerThreshold) / (threshold - triggerThreshold)))
                 .onChange(of: minY) { oldValue, newValue in
-                    // 只有在下拉超过阈值并且开始回弹时才触发刷新
+                    // 只在下拉超过阈值并开始回弹时触发一次刷新
                     if !isRefreshing && 
+                       !hasTriggeredRefresh && // 确保只触发一次
                        oldValue > threshold && 
-                       newValue < oldValue && 
-                       newValue > triggerThreshold {
+                       newValue < oldValue {
                         withAnimation(.easeInOut(duration: 0.2)) {
+                            hasTriggeredRefresh = true
                             action()
                         }
+                    }
+                    
+                    // 当完全收回时重置状态
+                    if newValue < triggerThreshold {
+                        hasTriggeredRefresh = false
                     }
                 }
             }
