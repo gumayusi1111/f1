@@ -275,10 +275,15 @@ struct AddExerciseView: View {
                     isLoading = false
                     print("❌ 保存失败: \(error.localizedDescription)")
                 } else {
-                    // 播放系统音效
-                    AudioServicesPlaySystemSound(1519) // 成功提示音
+                    // 1. 触觉反馈
+                    let notificationGenerator = UINotificationFeedbackGenerator()
+                    notificationGenerator.prepare() // 提前准备减少延迟
+                    notificationGenerator.notificationOccurred(.success)
                     
-                    // 显示成功动画
+                    // 2. 播放系统音效
+                    AudioServicesPlaySystemSound(1004) // 使用系统提示音
+                    
+                    // 3. 显示成功动画
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                         showSuccessToast = true
                         showSaveAnimation = true
@@ -313,7 +318,17 @@ private struct SelectableButton: View {
     let color: Color
     
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            // 1. 触觉反馈
+            let impactGenerator = UIImpactFeedbackGenerator(style: .light)
+            impactGenerator.prepare()
+            impactGenerator.impactOccurred()
+            
+            // 2. 播放按钮音效
+            AudioServicesPlaySystemSound(1104) // 使用系统按钮音效
+            
+            action()
+        }) {
             Text(title)
                 .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
                 .padding(.horizontal, 16)

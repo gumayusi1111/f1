@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseFirestore
+import AudioToolbox
 
 // 添加在文件顶部
 private func getCategoryColor(_ category: String) -> Color {
@@ -1027,14 +1028,7 @@ struct ProjectManagementSheet: View {
                                     .opacity(selectedCategory == category ? 1 : 0)
                             }
                             .onTapGesture {
-                                withAnimation(.easeInOut) {
-                                    selectedCategory = category
-                                    // 选择类别时自动展开
-                                    if category != "全部" {
-                                        isSystemExpanded = true
-                                        isCustomExpanded = true
-                                    }
-                                }
+                                handleCategoryTap(category)
                             }
                         }
                     }
@@ -1431,6 +1425,27 @@ struct ProjectManagementSheet: View {
             print("💾 保存到缓存：\(exercises.count) 个项目")
         }
     }
+    
+    // 修改 handleCategoryTap 函数
+    private func handleCategoryTap(_ category: String) {
+        // 添加触觉反馈
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+        
+        // 播放系统音效
+        AudioServicesPlaySystemSound(1104)
+        
+        // 更新选中的类别
+        withAnimation(.easeInOut) {
+            selectedCategory = category
+            // 选择类别时自动展开
+            if category != "全部" {
+                isSystemExpanded = true
+                isCustomExpanded = true
+            }
+        }
+    }
 }
 
 // MARK: - Subviews
@@ -1702,7 +1717,17 @@ struct PRRecordCard: View {
     @State private var showingDetail = false
     
     var body: some View {
-        Button(action: { showingDetail = true }) {
+        Button(action: { 
+            // 添加触觉反馈
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.prepare()
+            generator.impactOccurred()
+            
+            // 播放系统音效
+            AudioServicesPlaySystemSound(1520) // 使用提示音
+            
+            showingDetail = true 
+        }) {
             VStack(alignment: .leading, spacing: 12) {
                 // 标题和类别
                 HStack {
@@ -1780,10 +1805,7 @@ struct PRRecordCard: View {
             .cornerRadius(12)
             .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
         }
-        .buttonStyle(PlainButtonStyle())
-        .sheet(isPresented: $showingDetail) {
-            ExerciseDetailView(exercise: exercise)
-        }
+        .buttonStyle(PRCardButtonStyle()) // 添加自定义按钮样式
     }
 }
 
@@ -1896,7 +1918,17 @@ struct CategoryButtonWithCount: View {
     }
     
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            // 添加触觉反馈
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.prepare()
+            generator.impactOccurred()
+            
+            // 播放系统音效
+            AudioServicesPlaySystemSound(1104) // 使用按钮音效
+            
+            action()
+        }) {
             HStack(spacing: 4) {
                 Text(title)
                 Text("\(count)")
@@ -1926,6 +1958,7 @@ struct CategoryButtonWithCount: View {
                         radius: 4, x: 0, y: 2)
             )
         }
+        .buttonStyle(CategoryButtonStyle(isSelected: isSelected))
     }
 }
 
@@ -2348,6 +2381,26 @@ extension Exercise {
         self.lastRecordDate = (dictionary["lastRecordDate"] as? Timestamp)?.dateValue()
         
         print("✅ 成功创建运动项目: \(name)")
+    }
+}
+
+// 2. 添加自定义按钮样式
+private struct PRCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+// 4. 添加类别按钮样式
+private struct CategoryButtonStyle: ButtonStyle {
+    let isSelected: Bool
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
