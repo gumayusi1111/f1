@@ -362,9 +362,27 @@ struct MaxRecordsView: View {
                 .padding(.top)
             )
             .onAppear {
-                updateLastSyncTime() // 初始化同步时间显示
-                Task {
-                    await performRefresh()
+                updateLastSyncTime() // 只更新同步时间显示
+                
+                // 如果是首次加载，尝试从缓存加载数据
+                if isFirstLoading {
+                    Task {
+                        if let cached = loadPRsFromCache() {
+                            withAnimation {
+                                self.recentPRs = cached
+                                isFirstLoading = false
+                            }
+                            print("✅ 从缓存加载了 \(cached.count) 条PR记录")
+                        }
+                        
+                        // 尝试从缓存加载运动项目
+                        if let cached = loadFromCache() {
+                            print("📦 从缓存加载数据...")
+                            self.exercises = cached
+                            isLoading = false
+                            print("✅ 从缓存加载了 \(cached.count) 个项目")
+                        }
+                    }
                 }
             }
         }
@@ -1164,7 +1182,7 @@ struct ProjectManagementSheet: View {
                     .listRowSeparator(.hidden)
                     .padding(.horizontal, 16)
                 }
-                .listStyle(PlainListStyle())
+                .listStyle(.plain)
                 .environment(\.defaultMinListRowHeight, 0)
             }
             .navigationTitle("项目管理")
