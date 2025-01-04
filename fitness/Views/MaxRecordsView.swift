@@ -924,6 +924,8 @@ struct ProjectManagementSheet: View {
     @State private var showAlert = false
     @State private var alertType: AlertType = .deleteConfirm(exercise: nil)
     @State private var isLoadingData = true
+    @State private var showSuccessToast = false  // 添加这行
+    @State private var deletedExerciseName = ""  // 添加这行
     
     // 展开状态
     @State private var isSystemExpanded = false
@@ -1201,15 +1203,130 @@ struct ProjectManagementSheet: View {
                 isCustomExpanded = false
             }
         }
+        .overlay(alignment: .top) {
+            if showSuccessToast {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("\(deletedExerciseName) 已删除")
+                        .font(.subheadline)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(.systemBackground))
+                .cornerRadius(8)
+                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .padding(.top, 4)
+            }
+        }
+        .alert(
+            "确认删除",
+            isPresented: $showAlert,
+            presenting: alertType
+        ) { type in
+            switch type {
+            case .deleteConfirm(let exercise):
+                if let exercise = exercise {
+                    Button("取消", role: .cancel) { }
+                    Button("删除", role: .destructive) {
+                        executeDelete(exercise)
+                    }
+                }
+            case .deleteLimit:
+                Button("知道了", role: .cancel) { }
+            default:
+                Button("确定", role: .cancel) { }
+            }
+        } message: { type in
+            switch type {
+            case .deleteConfirm(let exercise):
+                if let exercise = exercise {
+                    Text("确定要删除\"\(exercise.name)\"吗？此操作不可恢复。")
+                } else {
+                    Text("确定要删除吗？")
+                }
+            case .deleteLimit:
+                Text("已达到今日删除上限（10次），请明天再试。")
+            default:
+                Text("")
+            }
+        }
     }
     
     // MARK: - Functions
     private func handleDelete(_ exercise: Exercise) {
-        // 实现删除逻辑
+        print("\n========== 准备删除项目 ==========")
+        print("🗑️ 请求删除项目: \(exercise.name)")
+        
+        // 显示确认对话框
+        alertType = .deleteConfirm(exercise: exercise)
+        showAlert = true
     }
     
     private func handleAdd() {
         showingAddSheet = true
+    }
+    
+    // 添加实际执行删除的函数
+    private func executeDelete(_ exercise: Exercise) {
+        print("🗑️ 确认删除项目: \(exercise.name)")
+        
+        // 检查是否是系统预设
+        guard !exercise.isSystemPreset else {
+            print("❌ 无法删除系统预设项目")
+            return
+        }
+        
+        // 检查删除限制
+        let today = Calendar.current.startOfDay(for: Date())
+        let lastDate = Date(timeIntervalSince1970: lastCreatedDate)
+        
+        if !Calendar.current.isDate(lastDate, inSameDayAs: today) {
+            todayDeletedCount = 0
+            lastCreatedDate = Date().timeIntervalSince1970
+        }
+        
+        guard todayDeletedCount < 10 else {
+            print("⚠️ 已达到每日删除上限")
+            alertType = .deleteLimit
+            showAlert = true
+            return
+        }
+        
+        // 执行删除操作
+        let db = Firestore.firestore()
+        db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .document(exercise.id)
+            .delete { [self] error in
+                if let error = error {
+                    print("❌ 删除失败: \(error.localizedDescription)")
+                } else {
+                    print("✅ 删除成功")
+                    // 更新本地数据
+                    if let index = exercises.firstIndex(where: { $0.id == exercise.id }) {
+                        exercises.remove(at: index)
+                    }
+                    // 更新删除计数
+                    todayDeletedCount += 1
+                    
+                    // 显示成功提示
+                    deletedExerciseName = exercise.name
+                    withAnimation {
+                        showSuccessToast = true
+                    }
+                    // 3秒后隐藏提示
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        withAnimation {
+                            showSuccessToast = false
+                        }
+                    }
+                }
+            }
+        
+        print("========== 删除操作结束 ==========\n")
     }
     
     // 添加 loadExercises 函数
