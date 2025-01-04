@@ -111,20 +111,18 @@ struct MaxRecordsView: View {
     
     // 修改刷新函数
     private func refresh() {
-        // 如果是从 sheet 关闭触发的,不执行刷新
-        if isSheetPresented {
-            return
-        }
+        guard !isRefreshing else { return }
         
         if !canRefresh() {
             showRefreshLimitAlert = true
             return
         }
         
-        Task {
+        withAnimation(.easeInOut(duration: 0.3)) {
             isRefreshing = true
-            isFirstLoading = true
-            
+        }
+        
+        Task {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     await loadExercises()
@@ -140,9 +138,8 @@ struct MaxRecordsView: View {
             
             try? await Task.sleep(nanoseconds: 500_000_000)
             
-            withAnimation {
+            withAnimation(.easeInOut(duration: 0.3)) {
                 isRefreshing = false
-                isFirstLoading = false
             }
         }
     }
@@ -150,212 +147,250 @@ struct MaxRecordsView: View {
     var body: some View {
         NavigationView {
             ScrollView {
-                // 添加下拉刷新控件
-                RefreshControl(
-                    isRefreshing: $isRefreshing,
-                    action: refresh,
-                    lastSyncTimeString: lastSyncTimeString
-                )
-                
-                VStack(spacing: 20) {
-                    // 项目管理入口
-                    Button(action: { showingProjectSheet = true }) {
-                        // 整个卡片容器
-                        HStack(spacing: 15) {
-                            // 左侧图标
-                            ZStack {
-                                Circle()
-                                    .fill(Color.blue.opacity(0.1))
-                                    .frame(width: 40, height: 40)
-                                Image(systemName: "dumbbell.fill")
-                                    .foregroundColor(.blue)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("项目管理")
-                                    .font(.headline)
-                                Text("管理训练项目和动作")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.gray)
-                                .font(.system(size: 14, weight: .semibold))
-                        }
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.systemBackground))
-                                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
-                        )
-                    }
-                    .padding(.horizontal)
-                    
-                    // PR 搜索栏
-                    SearchBar(text: $prSearchText)
-                        .padding(.horizontal)
-                    
-                    // PR 类别选择
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            HStack(spacing: 12) {
-                                ForEach(categories, id: \.self) { category in
-                                    let count = category == "全部" ? 
-                                        (prSearchText.isEmpty ? recentPRs.count : filteredPRs.count) :
-                                        recentPRs.filter { exercise in
-                                            let matchesCategory = exercise.category == category
-                                            let matchesSearch = prSearchText.isEmpty || 
-                                                exercise.name.localizedCaseInsensitiveContains(prSearchText)
-                                            return matchesCategory && matchesSearch
-                                        }.count
-                                    
-                                    Button(action: { 
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                            selectedPRCategory = category
-                                        }
-                                    }) {
-                                        VStack(spacing: 8) {
-                                            HStack(spacing: 4) {
-                                                Text(category)
-                                                Text("\(count)")
-                                                    .font(.system(size: 12))
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 2)
-                                                    .background(
-                                                        Capsule()
-                                                            .fill(selectedPRCategory == category ? 
-                                                                Color.white.opacity(0.2) : 
-                                                                getCategoryColor(category).opacity(0.1))
-                                                    )
-                                            }
-                                            .font(.system(size: 14))
-                                            .fontWeight(selectedPRCategory == category ? .semibold : .regular)
-                                            .foregroundColor(selectedPRCategory == category ? .white : .primary)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .fill(selectedPRCategory == category ? 
-                                                        getCategoryColor(category) : Color(.systemGray6))
-                                            )
-                                            
-                                            // 添加下划线
-                                            Rectangle()
-                                                .fill(getCategoryColor(category))
-                                                .frame(height: 2)
-                                                .opacity(selectedPRCategory == category ? 1 : 0)
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                    
-                    // PR 记录展示
-                    VStack(spacing: 16) {
-                        if isFirstLoading {
-                            // 骨架屏
-                            LazyVGrid(columns: prColumns, spacing: 16) {
-                                ForEach(0..<6, id: \.self) { _ in
-                                    PRRecordCardSkeleton()
-                                }
-                            }
-                            .padding(.horizontal)
-                        } else {
-                            LazyVGrid(columns: prColumns, spacing: 16) {
-                                ForEach(currentPageItems) { exercise in
-                                    PRRecordCard(
-                                        exercise: exercise,
-                                        maxRecord: exercise.maxRecord,
-                                        lastRecordDate: exercise.lastRecordDate
-                                    )
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
+                VStack(spacing: 0) {
+                    GeometryReader { geometry in
+                        let offset = geometry.frame(in: .named("scroll")).minY
+                        let progress = min(max(0, offset / 80), 1)
                         
-                        // 分页控制
-                        if !filteredPRs.isEmpty {  // 修改这里，只要有数据就显示分页
-                            HStack(spacing: 20) {
-                                Button(action: {
-                                    withAnimation {
-                                        currentPage = max(1, currentPage - 1)
-                                    }
-                                }) {
-                                    Image(systemName: "chevron.left")
-                                        .foregroundColor(currentPage > 1 ? .blue : .gray)
+                        // 刷新控件
+                        VStack(spacing: 8) {
+                            if isRefreshing {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .tint(.blue)
+                                    Text("正在刷新...")
+                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 14))
                                 }
-                                .disabled(currentPage <= 1)
+                            } else {
+                                Image(systemName: "arrow.down")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                    .rotationEffect(.degrees(Double(progress) * -180))
                                 
-                                Text("\(currentPage) / \(totalPages)")
+                                Text(lastSyncTimeString == "未同步" ? 
+                                    "下拉刷新" : 
+                                    "上次同步：\(lastSyncTimeString)")
                                     .font(.system(size: 14))
                                     .foregroundColor(.secondary)
-                                
-                                Button(action: {
-                                    withAnimation {
-                                        currentPage = min(totalPages, currentPage + 1)
-                                    }
-                                }) {
-                                    Image(systemName: "chevron.right")
-                                        .foregroundColor(currentPage < totalPages ? .blue : .gray)
-                                }
-                                .disabled(currentPage >= totalPages)
                             }
-                            .padding(.bottom)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .opacity(progress)
+                    }
+                    .frame(height: 40)
+                    .padding(.top, 10) // 顶部间距10pt
+                    
+                    // 标题区域
+                    Text("个人最佳")
+                        .font(.system(size: 28, weight: .bold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.top, 10)
+                    
+                    // 其他内容
+                    VStack(spacing: 20) {
+                        // 项目管理入口
+                        Button(action: { showingProjectSheet = true }) {
+                            // 整个卡片容器
+                            HStack(spacing: 15) {
+                                // 左侧图标
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.blue.opacity(0.1))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "dumbbell.fill")
+                                        .foregroundColor(.blue)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("项目管理")
+                                        .font(.headline)
+                                    Text("管理训练项目和动作")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.gray)
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color(.systemBackground))
+                                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+                            )
+                        }
+                        .padding(.horizontal)
+                        
+                        // PR 搜索栏
+                        SearchBar(text: $prSearchText)
+                            .padding(.horizontal)
+                        
+                        // PR 类别选择
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            VStack(spacing: 0) {
+                                HStack(spacing: 12) {
+                                    ForEach(categories, id: \.self) { category in
+                                        let count = category == "全部" ? 
+                                            (prSearchText.isEmpty ? recentPRs.count : filteredPRs.count) :
+                                            recentPRs.filter { exercise in
+                                                let matchesCategory = exercise.category == category
+                                                let matchesSearch = prSearchText.isEmpty || 
+                                                    exercise.name.localizedCaseInsensitiveContains(prSearchText)
+                                                return matchesCategory && matchesSearch
+                                            }.count
+                                        
+                                        Button(action: { 
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                                selectedPRCategory = category
+                                            }
+                                        }) {
+                                            VStack(spacing: 8) {
+                                                HStack(spacing: 4) {
+                                                    Text(category)
+                                                    Text("\(count)")
+                                                        .font(.system(size: 12))
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(
+                                                            Capsule()
+                                                                .fill(selectedPRCategory == category ? 
+                                                                    Color.white.opacity(0.2) : 
+                                                                    getCategoryColor(category).opacity(0.1))
+                                                        )
+                                                }
+                                                .font(.system(size: 14))
+                                                .fontWeight(selectedPRCategory == category ? .semibold : .regular)
+                                                .foregroundColor(selectedPRCategory == category ? .white : .primary)
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 8)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 8)
+                                                        .fill(selectedPRCategory == category ? 
+                                                            getCategoryColor(category) : Color(.systemGray6))
+                                                )
+                                                
+                                                // 添加下划线
+                                                Rectangle()
+                                                    .fill(getCategoryColor(category))
+                                                    .frame(height: 2)
+                                                    .opacity(selectedPRCategory == category ? 1 : 0)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+                        }
+                        
+                        // PR 记录展示
+                        VStack(spacing: 16) {
+                            if isFirstLoading {
+                                // 骨架屏
+                                LazyVGrid(columns: prColumns, spacing: 16) {
+                                    ForEach(0..<6, id: \.self) { _ in
+                                        PRRecordCardSkeleton()
+                                    }
+                                }
+                                .padding(.horizontal)
+                            } else {
+                                LazyVGrid(columns: prColumns, spacing: 16) {
+                                    ForEach(currentPageItems) { exercise in
+                                        PRRecordCard(
+                                            exercise: exercise,
+                                            maxRecord: exercise.maxRecord,
+                                            lastRecordDate: exercise.lastRecordDate
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+                            
+                            // 分页控制
+                            if !filteredPRs.isEmpty {  // 修改这里，只要有数据就显示分页
+                                HStack(spacing: 20) {
+                                    Button(action: {
+                                        withAnimation {
+                                            currentPage = max(1, currentPage - 1)
+                                        }
+                                    }) {
+                                        Image(systemName: "chevron.left")
+                                            .foregroundColor(currentPage > 1 ? .blue : .gray)
+                                    }
+                                    .disabled(currentPage <= 1)
+                                    
+                                    Text("\(currentPage) / \(totalPages)")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.secondary)
+                                    
+                                    Button(action: {
+                                        withAnimation {
+                                            currentPage = min(totalPages, currentPage + 1)
+                                        }
+                                    }) {
+                                        Image(systemName: "chevron.right")
+                                            .foregroundColor(currentPage < totalPages ? .blue : .gray)
+                                    }
+                                    .disabled(currentPage >= totalPages)
+                                }
+                                .padding(.bottom)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("个人最佳")
-            .alert("刷新限制", isPresented: $showRefreshLimitAlert) {
-                Button("知道了", role: .cancel) { }
-            } message: {
-                Text("请等待一分钟后再次刷新")
-            }
-            .overlay(
-                VStack {
-                    if !connectivityManager.isOnline {
-                        Text("网络连接已断开")
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.6))
-                            .cornerRadius(20)
-                    }
-                    Spacer()
+            .coordinateSpace(name: "scroll")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .alert("刷新限制", isPresented: $showRefreshLimitAlert) {
+            Button("知道了", role: .cancel) { }
+        } message: {
+            Text("请等待一分钟后再次刷新")
+        }
+        .overlay(
+            VStack {
+                if !connectivityManager.isOnline {
+                    Text("网络连接已断开")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.6))
+                        .cornerRadius(20)
                 }
-                .padding(.top)
+                Spacer()
+            }
+            .padding(.top)
+        )
+        .onAppear {
+            updateLastSyncTime()
+            Task {
+                await loadExercises()
+                await loadRecentPRs()
+            }
+        }
+        .onDisappear {
+            // 清空搜索内容
+            prSearchText = ""
+            // 重置类别选择
+            selectedPRCategory = nil
+        }
+        .sheet(isPresented: $showingProjectSheet) {
+            isSheetPresented = false // sheet 关闭时更新状态
+        } content: {
+            ProjectManagementSheet(
+                exercises: $exercises,
+                showSystemExercises: $showSystemExercises,
+                showCustomExercises: $showCustomExercises
             )
             .onAppear {
-                updateLastSyncTime()
-                Task {
-                    await loadExercises()
-                    await loadRecentPRs()
-                }
-            }
-            .onDisappear {
-                // 清空搜索内容
-                prSearchText = ""
-                // 重置类别选择
-                selectedPRCategory = nil
-            }
-            .sheet(isPresented: $showingProjectSheet) {
-                isSheetPresented = false // sheet 关闭时更新状态
-            } content: {
-                ProjectManagementSheet(
-                    exercises: $exercises,
-                    showSystemExercises: $showSystemExercises,
-                    showCustomExercises: $showCustomExercises
-                )
-                .onAppear {
-                    isSheetPresented = true // sheet 显示时更新状态
-                }
+                isSheetPresented = true // sheet 显示时更新状态
             }
         }
     }
@@ -1262,59 +1297,140 @@ struct ExerciseRow: View {
     let exercise: Exercise
     var onDelete: (() -> Void)?
     @State private var isPressed = false
+    @State private var offset: CGFloat = 0
+    @State private var isSwiped = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(exercise.name)
-                    .font(.headline)
-                
-                HStack(spacing: 6) {
-                    Text(exercise.category)
-                    if let unit = exercise.unit, !unit.isEmpty {
-                        Text("·")
-                        Text(unit)
-                    }
-                }
-                .font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(Color.blue.opacity(0.1))
-                )
-                .foregroundColor(.blue)
-                
-                Spacer()
-                
+        GeometryReader { geometry in
+            ZStack {
+                // 删除背景
                 if !exercise.isSystemPreset {
-                    Button(action: { onDelete?() }) {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red)
+                    HStack(spacing: 0) {
+                        Spacer()
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                offset = 0
+                                isSwiped = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                onDelete?()
+                            }
+                        }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 16, weight: .medium))
+                                Text("删除")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(.white)
+                            .frame(width: 72, height: 60)
+                            .contentShape(Rectangle())
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [
+                                            Color.red.opacity(0.9),
+                                            Color.red
+                                        ]),
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                                .shadow(color: Color.red.opacity(0.2), radius: 3, x: 0, y: 2)
+                        )
+                        .opacity(Double(abs(offset)) / 72.0)
+                        .padding(.trailing, 4)
+                    }
+                    .frame(height: geometry.size.height)
+                }
+                
+                // 主内容
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(exercise.name)
+                            .font(.headline)
+                        
+                        HStack(spacing: 6) {
+                            Text(exercise.category)
+                            if let unit = exercise.unit, !unit.isEmpty {
+                                Text("·")
+                                Text(unit)
+                            }
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Color.blue.opacity(0.1))
+                        )
+                        .foregroundColor(.blue)
+                        
+                        Spacer()
+                        
+                        // 移除了点击删除按钮
+                    }
+                    
+                    Text(exercise.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 4)
+                .background(Color(.systemBackground))
+                .cornerRadius(10)
+                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                .scaleEffect(isPressed ? 0.98 : 1)
+                .offset(x: offset)
+                .gesture(
+                    DragGesture()
+                        .onChanged { gesture in
+                            if !exercise.isSystemPreset {
+                                let newOffset = gesture.translation.width
+                                if newOffset < -72 {
+                                    let extraOffset = newOffset + 72
+                                    offset = -72 + (extraOffset / 3)
+                                } else {
+                                    offset = max(-72, newOffset)
+                                }
+                            }
+                        }
+                        .onEnded { gesture in
+                            if !exercise.isSystemPreset {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    if gesture.translation.width < -20 {
+                                        offset = -72
+                                        isSwiped = true
+                                    } else {
+                                        offset = 0
+                                        isSwiped = false
+                                    }
+                                }
+                            }
+                        }
+                )
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPressed)
+                .onTapGesture {
+                    if isSwiped {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            offset = 0
+                            isSwiped = false
+                        }
+                    } else {
+                        withAnimation {
+                            isPressed = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                isPressed = false
+                            }
+                        }
                     }
                 }
             }
-            
-            Text(exercise.description)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(2)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
-        .background(Color(.systemBackground))
-        .cornerRadius(10)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-        .scaleEffect(isPressed ? 0.98 : 1)
-        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isPressed)
-        .onTapGesture {
-            withAnimation {
-                isPressed = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isPressed = false
-                }
-            }
-        }
+        .frame(height: 90)
     }
 }
 
@@ -2043,60 +2159,71 @@ struct PRRecordCardSkeleton: View {
     }
 }
 
-// 修改 RefreshControl 组件
+// 添加 ScrollOffsetPreferenceKey
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+// 修改 RefreshControl
 struct RefreshControl: View {
     @Binding var isRefreshing: Bool
     let action: () -> Void
     let lastSyncTimeString: String
-    @State private var hasTriggeredRefresh = false // 添加状态追踪是否已触发刷新
+    @State private var hasTriggeredRefresh = false
     
     var body: some View {
         GeometryReader { geometry in
-            let minY = geometry.frame(in: .global).minY
-            let threshold: CGFloat = 180  // 增加阈值，让下拉不那么敏感
-            let triggerThreshold: CGFloat = 120  // 增加触发阈值
+            let offset = geometry.frame(in: .named("scroll")).minY
+            let progress = min(max(0, offset / 80), 1)
             
-            if minY > triggerThreshold {
-                VStack(spacing: 8) {
-                    if isRefreshing {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .tint(.blue)
-                            Text("正在刷新...")
-                                .foregroundColor(.secondary)
-                                .font(.system(size: 14))
-                        }
-                    } else {
-                        Text(lastSyncTimeString == "未同步" ? 
-                            "下拉刷新" : 
-                            "上次同步：\(lastSyncTimeString)")
-                            .font(.system(size: 14))
+            VStack(spacing: 8) {
+                if isRefreshing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .tint(.blue)
+                        Text("正在刷新...")
                             .foregroundColor(.secondary)
+                            .font(.system(size: 14))
                     }
+                } else {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                        // 修复箭头旋转角度计算
+                        .rotationEffect(.degrees(Double(progress) * -180))
                 }
-                .frame(width: geometry.size.width)
-                .offset(y: -minY + (isRefreshing ? 80 : 60))
-                .opacity(isRefreshing ? 1 : min(1, (minY - triggerThreshold) / (threshold - triggerThreshold)))
-                .onChange(of: minY) { oldValue, newValue in
-                    // 只在下拉超过阈值并开始回弹时触发一次刷新
-                    if !isRefreshing && 
-                       !hasTriggeredRefresh && // 确保只触发一次
-                       oldValue > threshold && 
-                       newValue < oldValue {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            hasTriggeredRefresh = true
-                            action()
-                        }
-                    }
-                    
-                    // 当完全收回时重置状态
-                    if newValue < triggerThreshold {
-                        hasTriggeredRefresh = false
-                    }
-                }
+                
+                Text(lastSyncTimeString == "未同步" ? 
+                    "下拉刷新" : 
+                    "上次同步：\(lastSyncTimeString)")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
             }
+            .frame(width: geometry.size.width)
+            .frame(height: 40)
+            .offset(y: max(-20, -40 + offset * 0.8))
+            .opacity(progress)
         }
         .frame(height: 0)
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
+            if !isRefreshing && !hasTriggeredRefresh && offset > 100 {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    hasTriggeredRefresh = true
+                }
+                
+                // 添加触发动画
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    action()
+                }
+            }
+            
+            if offset < 10 {
+                hasTriggeredRefresh = false
+            }
+        }
     }
 }
 
