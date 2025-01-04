@@ -69,14 +69,33 @@ struct MaxRecordsView: View {
     
     // 计算总页数
     private var totalPages: Int {
-        Int(ceil(Double(filteredPRs.count) / Double(pageSize)))
+        let total = Int(ceil(Double(filteredPRs.count) / Double(pageSize)))
+        return max(1, total)  // 确保至少有一页
     }
     
     // 获取当前页的项目
     private var currentPageItems: [Exercise] {
+        guard !filteredPRs.isEmpty else { return [] }  // 如果没有数据，返回空数组
+        
         let startIndex = (currentPage - 1) * pageSize
+        // 确保 startIndex 不超过数组长度
+        guard startIndex < filteredPRs.count else { 
+            currentPage = 1  // 重置到第一页
+            return Array(filteredPRs[0..<min(pageSize, filteredPRs.count)])
+        }
+        
         let endIndex = min(startIndex + pageSize, filteredPRs.count)
         return Array(filteredPRs[startIndex..<endIndex])
+    }
+    
+    // 添加页码验证函数
+    private func validateCurrentPage() {
+        if currentPage > totalPages {
+            currentPage = totalPages
+        }
+        if currentPage < 1 {
+            currentPage = 1
+        }
     }
     
     // 1. 添加缓存键常量
@@ -126,6 +145,65 @@ struct MaxRecordsView: View {
         }
     }
     
+    // 添加一个一次性清理函数
+    private func cleanupDuplicateSystemExercises() async {
+        print("\n========== 开始清理重复的系统预设项目 ==========")
+        let db = Firestore.firestore()
+        
+        do {
+            // 1. 获取系统预设ID列表
+            let systemSnapshot = try await db.collection("systemExercises").getDocuments()
+            let systemIds = Set(systemSnapshot.documents.map { $0.documentID })
+            print("📊 系统预设项目数量：\(systemIds.count)")
+            
+            // 2. 获取用户项目列表
+            let userSnapshot = try await db.collection("users")
+                .document(userId)
+                .collection("exercises")
+                .getDocuments()
+            
+            // 3. 找出需要删除的文档
+            var documentsToDelete: [String] = []
+            for doc in userSnapshot.documents {
+                if systemIds.contains(doc.documentID) {
+                    documentsToDelete.append(doc.documentID)
+                    print("🗑️ 将删除重复项目：\(doc.data()["name"] ?? "未知") (ID: \(doc.documentID))")
+                }
+            }
+            
+            print("\n开始删除 \(documentsToDelete.count) 个重复项目...")
+            
+            // 4. 批量删除重复项目
+            let batch = db.batch()
+            for docId in documentsToDelete {
+                let docRef = db.collection("users")
+                    .document(userId)
+                    .collection("exercises")
+                    .document(docId)
+                batch.deleteDocument(docRef)
+            }
+            
+            try await batch.commit()
+            print("✅ 成功删除 \(documentsToDelete.count) 个重复项目")
+            
+            // 5. 验证清理结果
+            let finalSnapshot = try await db.collection("users")
+                .document(userId)
+                .collection("exercises")
+                .getDocuments()
+            
+            print("\n清理结果：")
+            print("原始项目数量：\(userSnapshot.documents.count)")
+            print("删除项目数量：\(documentsToDelete.count)")
+            print("剩余项目数量：\(finalSnapshot.documents.count)")
+            
+            print("\n========== 清理完成 ==========")
+            
+        } catch {
+            print("❌ 清理失败：\(error.localizedDescription)")
+        }
+    }
+    
     // 2. 修改 performRefresh 函数
     private func performRefresh() async {
         guard !isRefreshing else { return }
@@ -141,7 +219,10 @@ struct MaxRecordsView: View {
         isRefreshing = true
         
         do {
-            // 并行加载数据
+            // 添加清理函数调用（只需要运行一次）
+            await cleanupDuplicateSystemExercises()
+            
+            // 继续原有的刷新逻辑
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
                     try await loadExercises()
@@ -541,44 +622,110 @@ struct MaxRecordsView: View {
     
     // 修改为异步函数
     private func loadExercises() async throws {
-        print("\n📱 开始加载运动项目...")
+        print("\n========== 开始加载运动项目 ==========")
         isLoading = true
         
-        // 先尝试从缓存加载
+        // 1. 缓存检查
+        print("\n----- 检查缓存 -----")
         if let cached = loadFromCache() {
-            print("📦 从缓存加载数据...")
+            print("📦 从缓存加载数据：\(cached.count) 个项目")
+            print("系统预设：\(cached.filter { $0.isSystemPreset }.count) 个")
+            print("用户自定义：\(cached.filter { !$0.isSystemPreset }.count) 个")
+            
             self.exercises = cached
             isLoading = false
-            print("✅ 从缓存加载了 \(cached.count) 个项目")
             
             if !isRefreshing {
+                print("✅ 使用缓存数据，跳过服务器请求")
                 return
             }
+        } else {
+            print("⚠️ 未找到缓存数据")
         }
         
+        // 2. 网络检查
         guard connectivityManager.isOnline else {
-            print("⚠️ 离线状态，使用缓存数据")
+            print("❌ 离线状态，无法从服务器加载")
             isLoading = false
             return
         }
         
-        print("🌐 正在从服务器获取最新数据...")
+        // 3. 加载系统预设
+        print("\n----- 加载系统预设项目 -----")
+        let db = Firestore.firestore()
+        let systemSnapshot = try await db.collection("systemExercises").getDocuments()
         
-            let db = Firestore.firestore()
-        let snapshot = try await db.collection("users")
-                .document(userId)
-                .collection("exercises")
-            .getDocuments()
-        
-                    isLoading = false
-                    
-        let loadedExercises = snapshot.documents.compactMap { doc -> Exercise? in
-            Exercise(dictionary: doc.data(), id: doc.documentID)
+        print("📊 系统预设文档数量：\(systemSnapshot.documents.count)")
+        print("\n系统预设详细信息：")
+        for doc in systemSnapshot.documents {
+            print("ID: \(doc.documentID)")
+            print("名称: \(doc.data()["name"] ?? "未知")")
+            print("类别: \(doc.data()["category"] ?? "未知")")
+            print("系统预设标志: \(doc.data()["isSystemPreset"] ?? "未知")")
+            print("---")
         }
         
-        print("✅ 成功加载 \(loadedExercises.count) 个项目")
-        exercises = loadedExercises
-        saveToCache(loadedExercises)
+        var allExercises: [Exercise] = []
+        var systemIds = Set<String>()  // 用于追踪系统预设ID
+        
+        // 处理系统预设
+        for doc in systemSnapshot.documents {
+            if let exercise = Exercise(dictionary: doc.data(), id: doc.documentID) {
+                var systemExercise = exercise
+                systemExercise.isSystemPreset = true
+                allExercises.append(systemExercise)
+                systemIds.insert(doc.documentID)  // 记录系统预设ID
+            } else {
+                print("⚠️ 无法解析系统预设项目：\(doc.documentID)")
+            }
+        }
+        
+        // 4. 加载用户自定义
+        print("\n----- 加载用户自定义项目 -----")
+        let userSnapshot = try await db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .getDocuments()
+        
+        print("📊 用户自定义文档数量：\(userSnapshot.documents.count)")
+        print("\n用户自定义详细信息：")
+        for doc in userSnapshot.documents {
+            print("ID: \(doc.documentID)")
+            print("名称: \(doc.data()["name"] ?? "未知")")
+            print("类别: \(doc.data()["category"] ?? "未知")")
+            print("系统预设标志: \(doc.data()["isSystemPreset"] ?? "未知")")
+            print("---")
+        }
+        
+        // 处理用户自定义，过滤掉系统预设
+        for doc in userSnapshot.documents {
+            // 跳过系统预设ID
+            if systemIds.contains(doc.documentID) {
+                continue
+            }
+            
+            if let exercise = Exercise(dictionary: doc.data(), id: doc.documentID) {
+                var userExercise = exercise
+                userExercise.isSystemPreset = false  // 确保设置为用户自定义
+                allExercises.append(userExercise)
+            }
+        }
+        
+        // 5. 数据统计和更新
+        print("\n----- 数据统计 -----")
+        let systemCount = allExercises.filter { $0.isSystemPreset }.count
+        let userCount = allExercises.filter { !$0.isSystemPreset }.count
+        print("系统预设总数：\(systemCount)")
+        print("用户自定义总数：\(userCount)")
+        print("总项目数：\(allExercises.count)")
+        
+        // 6. 更新数据
+        isLoading = false
+        exercises = allExercises
+        saveToCache(allExercises)
+        validateCurrentPage()  // 添加页码验证
+        
+        print("\n========== 数据加载完成 ==========")
     }
     
     // 修改为异步函数
@@ -927,19 +1074,22 @@ struct ProjectManagementSheet: View {
                                 // 可滚动的内容区域
                                 if isSystemExpanded {
                                     VStack(spacing: 0) {
-                                ForEach(pagedSystemExercises) { exercise in
+                                        ForEach(pagedSystemExercises) { exercise in
+                                            // 为系统预设添加前缀
+                                            let uniqueId = "system_\(exercise.id)"
                                             ExerciseRow(exercise: exercise) {}
+                                                .id(uniqueId)  // 使用唯一 ID
                                                 .padding(.horizontal)
                                                 .padding(.vertical, 12)
                                                 .background(Color(.systemBackground))
                                             
-                                            Divider()  // 添加分隔线
+                                            Divider()
                                         }
                                         
                                         if hasMoreSystem {
                                             Button(action: { systemPage += 1 }) {
-                                        HStack {
-                                            Text("加载更多")
+                                                HStack {
+                                                    Text("加载更多")
                                                         .font(.subheadline)
                                                     Image(systemName: "arrow.down.circle.fill")
                                                 }
@@ -961,18 +1111,18 @@ struct ProjectManagementSheet: View {
                             VStack(spacing: 0) {
                                 // 固定的标题栏
                                 Button(action: { withAnimation { isCustomExpanded.toggle() }}) {
-                            HStack(spacing: 12) {
+                                    HStack(spacing: 12) {
                                         Image(systemName: "folder.fill")
                                             .foregroundColor(.blue)
                                             .font(.system(size: 18))
                                         
                                         Text("我的项目")
-                                    .font(.headline)
+                                            .font(.headline)
                                             .foregroundColor(.primary)
                                         
                                         Text("(\(filteredCustomExercises.count))")
                                             .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                                        .foregroundColor(.secondary)
                                         
                                         Spacer()
                                         
@@ -987,21 +1137,24 @@ struct ProjectManagementSheet: View {
                                 // 可滚动的内容区域
                                 if isCustomExpanded {
                                     VStack(spacing: 0) {
-                                ForEach(pagedCustomExercises) { exercise in
-                                    ExerciseRow(exercise: exercise) {
+                                        ForEach(pagedCustomExercises) { exercise in
+                                            // 为用户自定义添加前缀
+                                            let uniqueId = "custom_\(exercise.id)"
+                                            ExerciseRow(exercise: exercise) {
                                                 handleDelete(exercise)
                                             }
+                                            .id(uniqueId)  // 使用唯一 ID
                                             .padding(.horizontal)
                                             .padding(.vertical, 12)
                                             .background(Color(.systemBackground))
                                             
-                                            Divider()  // 添加分隔线
+                                            Divider()
                                         }
                                         
                                         if hasMoreCustom {
                                             Button(action: { customPage += 1 }) {
-                                        HStack {
-                                            Text("加载更多")
+                                                HStack {
+                                                    Text("加载更多")
                                                         .font(.subheadline)
                                                     Image(systemName: "arrow.down.circle.fill")
                                                 }
@@ -1276,7 +1429,7 @@ struct CategoryButton: View {
                 )
                 
                 // 添加下划线
-            Rectangle()
+                Rectangle()
                     .fill(getCategoryColor(title))
                     .frame(height: 2)
                     .opacity(isSelected ? 1 : 0)
