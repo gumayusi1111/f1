@@ -1176,18 +1176,35 @@ struct ProjectManagementSheet: View {
             .navigationTitle("项目管理")
             .navigationBarItems(
                 leading: Button("关闭") { 
-                    // 关闭时收起展开的部分
                     isSystemExpanded = false
                     isCustomExpanded = false
                     dismiss()
                 },
-                trailing: Button(action: handleAdd) {
+                trailing: Button(action: { showingAddSheet = true }) {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
                         Text("添加项目")
                     }
                 }
             )
+            // 修改这里，使用新的 AddExerciseView
+            .sheet(isPresented: $showingAddSheet) {
+                AddExerciseView { newExercise in
+                    // 添加新项目到列表
+                    exercises.append(newExercise)
+                    
+                    // 自动展开自定义项目组
+                    withAnimation {
+                        isCustomExpanded = true
+                    }
+                    
+                    // 更新缓存
+                    saveToCache(exercises)
+                    
+                    // 重置页码
+                    customPage = 1
+                }
+            }
             // 监听搜索文本变化
             .onChange(of: searchText) { oldValue, newValue in
                 if !newValue.isEmpty {
