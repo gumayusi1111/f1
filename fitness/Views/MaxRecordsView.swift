@@ -44,8 +44,8 @@ struct MaxRecordsView: View {
     @State private var isRefreshing = false
     @State private var isFirstLoading = true  // 用于首次加载显示骨架屏
     
-    // 添加刷新限制相关属性
-    @AppStorage("lastRefreshTime") private var lastRefreshTime: Double = 0
+    // 刷新相关状态
+    @State private var lastRefreshTime: Date = UserDefaults.standard.object(forKey: "lastRefreshTime") as? Date ?? .distantPast
     @State private var showRefreshLimitAlert = false
     @State private var lastSyncTimeString: String = "未同步"
     
@@ -92,25 +92,35 @@ struct MaxRecordsView: View {
     
     // 检查是否可以刷新
     private func canRefresh() -> Bool {
-        let now = Date().timeIntervalSince1970
-        let timeSinceLastRefresh = now - lastRefreshTime
-        return timeSinceLastRefresh >= 60 // 60秒限制
+        guard let lastRefresh = UserDefaults.standard.object(forKey: "lastRefreshTime") as? Date else {
+            return true
+        }
+        return Date().timeIntervalSince(lastRefresh) >= 60
     }
     
-    // 更新同步时间显示
+    // 更新最后刷新时间
+    private func updateLastRefreshTime() {
+        let now = Date()
+        UserDefaults.standard.set(now, forKey: "lastRefreshTime")
+        lastRefreshTime = now
+    }
+    
+    // 1. 添加 updateLastSyncTime 函数
     private func updateLastSyncTime() {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         
         if lastSyncDate == .distantPast {
             lastSyncTimeString = "未同步"
+            print("⚠️ 同步状态: 未同步")
         } else {
-            lastSyncTimeString = "已同步: \(formatter.localizedString(for: lastSyncDate, relativeTo: Date()))"
+            lastSyncTimeString = formatter.localizedString(for: lastSyncDate, relativeTo: Date())
+            print("📅 更新同步时间: \(lastSyncTimeString)")
         }
     }
     
-    // 修改刷新函数
-    private func refresh() {
+    // 2. 修改 performRefresh 函数
+    private func performRefresh() async {
         guard !isRefreshing else { return }
         
         if !canRefresh() {
@@ -118,78 +128,61 @@ struct MaxRecordsView: View {
             return
         }
         
-        withAnimation(.easeInOut(duration: 0.3)) {
-            isRefreshing = true
-        }
+        print("\n========== 开始刷新数据 ==========")
+        print("📱 开始刷新: \(Date())")
         
-        Task {
-            await withTaskGroup(of: Void.self) { group in
+        isRefreshing = true
+        
+        do {
+            // 并行加载数据
+            try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
-                    await loadExercises()
+                    try await loadExercises()
                 }
+                
                 group.addTask {
-                    await loadRecentPRs()
+                    try await loadRecentPRs()
                 }
+                
+                try await group.waitForAll()
             }
             
-            lastRefreshTime = Date().timeIntervalSince1970
-            lastSyncDate = Date()
+            // 更新刷新时间
+            updateLastRefreshTime()
+            lastSyncDate = Date() // 更新最后同步日期
             updateLastSyncTime()
             
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            print("✅ 数据刷新成功")
+            print("📅 最后同步时间: \(lastSyncTimeString)")
             
-            withAnimation(.easeInOut(duration: 0.3)) {
-                isRefreshing = false
-            }
+        } catch {
+            print("❌ 刷新失败: \(error.localizedDescription)")
         }
+        
+        isRefreshing = false
+        print("========== 刷新结束 ==========\n")
     }
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 0) {
-                    GeometryReader { geometry in
-                        let offset = geometry.frame(in: .named("scroll")).minY
-                        let progress = min(max(0, offset / 80), 1)
+                    // 同步状态指示器
+                    HStack {
+                        Text(lastSyncTimeString == "未同步" ? "下拉刷新" : "上次同步：\(lastSyncTimeString)")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
                         
-                        // 刷新控件
-                        VStack(spacing: 8) {
-                            if isRefreshing {
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                        .tint(.blue)
-                                    Text("正在刷新...")
-                                        .foregroundColor(.secondary)
-                                        .font(.system(size: 14))
-                                }
-                            } else {
-                                Image(systemName: "arrow.down")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.secondary)
-                                    .rotationEffect(.degrees(Double(progress) * -180))
-                                
-                                Text(lastSyncTimeString == "未同步" ? 
-                                    "下拉刷新" : 
-                                    "上次同步：\(lastSyncTimeString)")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
-                            }
+                        if isRefreshing {
+                            ProgressView()
+                                .scaleEffect(0.8)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .opacity(progress)
                     }
+                    .frame(maxWidth: .infinity)
                     .frame(height: 40)
-                    .padding(.top, 10) // 顶部间距10pt
+                    .padding(.top, 10)
                     
-                    // 标题区域
-                    Text("个人最佳")
-                        .font(.system(size: 28, weight: .bold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                        .padding(.top, 10)
-                    
-                    // 其他内容
+                    // 主要内容
                     VStack(spacing: 20) {
                         // 项目管理入口
                         Button(action: { showingProjectSheet = true }) {
@@ -345,41 +338,35 @@ struct MaxRecordsView: View {
                     }
                 }
             }
-            .coordinateSpace(name: "scroll")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .alert("刷新限制", isPresented: $showRefreshLimitAlert) {
-            Button("知道了", role: .cancel) { }
-        } message: {
-            Text("请等待一分钟后再次刷新")
-        }
-        .overlay(
-            VStack {
-                if !connectivityManager.isOnline {
-                    Text("网络连接已断开")
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.6))
-                        .cornerRadius(20)
+            .refreshable {
+                await performRefresh()
+            }
+            .alert("刷新限制", isPresented: $showRefreshLimitAlert) {
+                Button("知道了", role: .cancel) { }
+            } message: {
+                Text("请等待一分钟后再次刷新")
+            }
+            .overlay(
+                VStack {
+                    if !connectivityManager.isOnline {
+                        Text("网络连接已断开")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.6))
+                            .cornerRadius(20)
+                    }
+                    Spacer()
                 }
-                Spacer()
+                .padding(.top)
+            )
+            .onAppear {
+                updateLastSyncTime() // 初始化同步时间显示
+                Task {
+                    await performRefresh()
+                }
             }
-            .padding(.top)
-        )
-        .onAppear {
-            updateLastSyncTime()
-            Task {
-                await loadExercises()
-                await loadRecentPRs()
-            }
-        }
-        .onDisappear {
-            // 清空搜索内容
-            prSearchText = ""
-            // 重置类别选择
-            selectedPRCategory = nil
         }
         .sheet(isPresented: $showingProjectSheet) {
             isSheetPresented = false // sheet 关闭时更新状态
@@ -410,14 +397,15 @@ struct MaxRecordsView: View {
     }
     
     // 修改加载 PR 记录的函数
-    private func loadRecentPRs() async {
+    private func loadRecentPRs() async throws {
+        print("📱 开始加载PR记录...")
         isFirstLoading = true
         
         // 1. 先尝试从缓存加载
         if let cached = loadPRsFromCache() {
             withAnimation {
                 self.recentPRs = cached
-                isFirstLoading = false  // 立即隐藏骨架屏
+                isFirstLoading = false
             }
             print("✅ 从缓存加载了 \(cached.count) 条PR记录")
             
@@ -427,15 +415,16 @@ struct MaxRecordsView: View {
             }
         }
         
-        // 2. 如果是离线状态，使用缓存数据
+        // 2. 检查网络状态
         guard connectivityManager.isOnline else {
             print("⚠️ 离线状态，使用缓存数据")
             isFirstLoading = false
             return
         }
         
-        // 3. 从服务器加载数据
-        return await withCheckedContinuation { continuation in
+        print("🔄 正在从服务器获取最新数据...")
+        
+        return try await withCheckedThrowingContinuation { continuation in
             let db = Firestore.firestore()
             db.collection("users")
                 .document(userId)
@@ -443,9 +432,9 @@ struct MaxRecordsView: View {
                 .order(by: "updatedAt", descending: true)
                 .getDocuments { [self] snapshot, error in
                     if let error = error {
-                        print("❌ 加载PR记录失败: \(error)")
+                        print("❌ 加载PR记录失败: \(error.localizedDescription)")
                         isFirstLoading = false
-                        continuation.resume()
+                        continuation.resume(throwing: error)
                         return
                     }
                     
@@ -457,6 +446,12 @@ struct MaxRecordsView: View {
                         // 加载系统预设项目
                         db.collection("systemExercises")
                             .getDocuments { snapshot, error in
+                                if let error = error {
+                                    print("❌ 加载系统预设失败: \(error.localizedDescription)")
+                                    continuation.resume(throwing: error)
+                                    return
+                                }
+                                
                                 if let documents = snapshot?.documents {
                                     let systemRecords = documents.compactMap { document in
                                         try? document.data(as: Exercise.self)
@@ -472,12 +467,16 @@ struct MaxRecordsView: View {
                                     self.savePRsToCache(records)
                                     
                                     print("✅ 成功加载 \(records.count) 条PR记录（包含 \(systemRecords.count) 条系统记录）")
+                                    continuation.resume(returning: ())
+                                } else {
+                                    print("⚠️ 没有找到系统预设记录")
+                                    continuation.resume(returning: ())
                                 }
-                                continuation.resume()
                             }
                     } else {
+                        print("⚠️ 没有找到PR记录")
                         isFirstLoading = false
-                        continuation.resume()
+                        continuation.resume(returning: ())
                     }
                 }
         }
@@ -515,19 +514,32 @@ struct MaxRecordsView: View {
         }
     }
     
-    private func loadExercises() async {
-        return await withCheckedContinuation { continuation in
-            isLoading = true
-            print("📱 开始从服务器加载运动项目...")
+    // 修改为异步函数
+    private func loadExercises() async throws {
+        print("\n📱 开始加载运动项目...")
+        isLoading = true
+        
+        // 先尝试从缓存加载
+        if let cached = loadFromCache() {
+            print("📦 从缓存加载数据...")
+            self.exercises = cached
+            isLoading = false
+            print("✅ 从缓存加载了 \(cached.count) 个项目")
             
-            // 先尝试从缓存加载
-            if let cached = loadFromCache() {
-                self.exercises = cached
-                isLoading = false
-                continuation.resume()
+            if !isRefreshing {
                 return
             }
-            
+        }
+        
+        guard connectivityManager.isOnline else {
+            print("⚠️ 离线状态，使用缓存数据")
+            isLoading = false
+            return
+        }
+        
+        print("🌐 正在从服务器获取最新数据...")
+        
+        return try await withCheckedThrowingContinuation { continuation in
             let db = Firestore.firestore()
             db.collection("users")
                 .document(userId)
@@ -536,18 +548,26 @@ struct MaxRecordsView: View {
                     isLoading = false
                     
                     if let error = error {
-                        print("❌ 加载失败: \(error)")
+                        print("❌ 加载失败: \(error.localizedDescription)")
+                        continuation.resume(throwing: error)
                         return
                     }
                     
                     if let documents = snapshot?.documents {
-                        self.exercises = documents.compactMap { doc in
+                        let loadedExercises = documents.compactMap { doc in
                             try? doc.data(as: Exercise.self)
                         }
+                        self.exercises = loadedExercises
+                        
                         // 保存到缓存
-                        self.saveToCache(self.exercises)
+                        self.saveToCache(loadedExercises)
+                        print("✅ 成功从服务器加载 \(loadedExercises.count) 个项目")
+                        print("💾 数据已保存到缓存")
+                        continuation.resume(returning: ())
+                    } else {
+                        print("⚠️ 没有找到运动项目数据")
+                        continuation.resume(returning: ())
                     }
-                    continuation.resume()
                 }
         }
     }
@@ -555,190 +575,186 @@ struct MaxRecordsView: View {
     // 修改为异步函数
     private func createSystemExercises() {
         Task {
-            let db = Firestore.firestore()
-            let batch = db.batch()
-            
-            // 创建特定的时间戳
-            let createdAt = Timestamp(date: Date(timeIntervalSince1970: 1704293287)) // 2025年1月3日 UTC+8 22:48:07
-            let updatedAt = Timestamp(date: Date(timeIntervalSince1970: 1704293297)) // 2025年1月3日 UTC+8 22:48:17
-            
-            // 预设项目数据
-            let systemExercises = [
-                [
-                    "category": "胸部",
-                    "createdAt": createdAt,
-                    "description": "在15-30度上斜卧推凳上，双手握住杠铃，重点锻炼上胸肌。",
-                    "isSystemPreset": true,
-                    "name": "上斜卧推",
-                    "notes": "1. 控制斜度不要太大\n2. 肘部夹角约75度\n3. 感受上胸发力",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "背部",
-                    "createdAt": createdAt,
-                    "description": "握距略宽于肩宽的杠铃划船，主要锻炼中背肌群。",
-                    "isSystemPreset": true,
-                    "name": "杠铃划船",
-                    "notes": "1. 保持背部平直\n2. 收缩肩胛骨\n3. 控制下放速度",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "腿部",
-                    "createdAt": createdAt,
-                    "description": "使用深蹲架进行深蹲，主要锻炼大腿和臀部肌肉。",
-                    "isSystemPreset": true,
-                    "name": "深蹲",
-                    "notes": "1. 脚与肩同宽\n2. 保持膝盖不超过脚尖\n3. 下蹲至大腿与地面平行",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "肩部",
-                    "createdAt": createdAt,
-                    "description": "站姿哑铃侧平举，主要锻炼肩部中束。",
-                    "isSystemPreset": true,
-                    "name": "哑铃侧平举",
-                    "notes": "1. 保持手臂微弯\n2. 控制动作速度\n3. 不要借力摆动",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "手臂",
-                    "createdAt": createdAt,
-                    "description": "站姿哑铃弯举，主要锻炼肱二头肌。",
-                    "isSystemPreset": true,
-                    "name": "哑铃弯举",
-                    "notes": "1. 保持肘部固定\n2. 完全伸展手臂\n3. 收缩时完全收紧",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "核心",
-                    "createdAt": createdAt,
-                    "description": "平板支撑，主要锻炼核心肌群。",
-                    "isSystemPreset": true,
-                    "name": "平板支撑",
-                    "notes": "1. 保持身体一直线\n2. 收紧腹肌和臀肌\n3. 眼睛向下看",
-                    "unit": "秒",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "胸部",
-                    "createdAt": createdAt,
-                    "description": "平卧哑铃飞鸟，主要锻炼胸大肌中部。",
-                    "isSystemPreset": true,
-                    "name": "哑铃飞鸟",
-                    "notes": "1. 保持手臂微弯\n2. 控制动作范围\n3. 感受胸肌收缩",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "有氧",
-                    "createdAt": createdAt,
-                    "description": "跑步机上进行中等强度跑步，有助于提升心肺功能。",
-                    "isSystemPreset": true,
-                    "name": "跑步",
-                    "notes": "1. 保持均匀呼吸\n2. 适当调整坡度\n3. 穿着合适的跑鞋",
-                    "unit": "分钟",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "全身",
-                    "createdAt": createdAt,
-                    "description": "高强度间歇训练（HIIT），结合多种动作提升全身耐力和力量。",
-                    "isSystemPreset": true,
-                    "name": "HIIT",
-                    "notes": "1. 热身充分\n2. 控制动作质量\n3. 适当休息",
-                    "unit": "分钟",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "背部",
-                    "createdAt": createdAt,
-                    "description": "引体向上，主要锻炼背阔肌和肱二头肌。",
-                    "isSystemPreset": true,
-                    "name": "引体向上",
-                    "notes": "1. 全程控制动作\n2. 下放时缓慢\n3. 双手握距适中",
-                    "unit": "次",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "腿部",
-                    "createdAt": createdAt,
-                    "description": "腿举机上进行腿举，主要锻炼大腿前侧和臀部。",
-                    "isSystemPreset": true,
-                    "name": "腿举",
-                    "notes": "1. 脚掌放稳\n2. 推举时呼气\n3. 控制回收速度",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "背部",
-                    "createdAt": createdAt,
-                    "description": "硬拉，主要锻炼下背部、臀部和大腿后侧。",
-                    "isSystemPreset": true,
-                    "name": "硬拉",
-                    "notes": "1. 保持背部平直\n2. 使用腿部力量发力\n3. 控制杠铃路径",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "胸部",
-                    "createdAt": createdAt,
-                    "description": "俯卧撑，主要锻炼胸部、肩部和三头肌。",
-                    "isSystemPreset": true,
-                    "name": "俯卧撑",
-                    "notes": "1. 保持身体一直线\n2. 下压至胸部接近地面\n3. 呼吸均匀",
-                    "unit": "次",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "手臂",
-                    "createdAt": createdAt,
-                    "description": "绳索下压，主要锻炼肱三头肌。",
-                    "isSystemPreset": true,
-                    "name": "绳索下压",
-                    "notes": "1. 保持肘部固定\n2. 全程控制重量\n3. 收缩时完全伸展手臂",
-                    "unit": "kg",
-                    "updatedAt": updatedAt
-                ],
-                [
-                    "category": "核心",
-                    "createdAt": createdAt,
-                    "description": "仰卧起坐，主要锻炼腹直肌。",
-                    "isSystemPreset": true,
-                    "name": "仰卧起坐",
-                    "notes": "1. 保持下背部贴地\n2. 用腹肌发力起身\n3. 避免用力拉扯颈部",
-                    "unit": "次",
-                    "updatedAt": updatedAt
-                ]
-            ] as [[String: Any]]
-            
-            systemExercises.forEach { exercise in
-                let docRef = db.collection("systemExercises").document()
-                var exerciseWithId = exercise
-                exerciseWithId["id"] = docRef.documentID  // 添加文档 ID
+            do {
+                let db = Firestore.firestore()
+                let batch = db.batch()
                 
-                batch.setData(exerciseWithId, forDocument: docRef)
-                print("📝 准备创建: \(exercise["name"] as? String ?? ""), 类别: \(exercise["category"] as? String ?? "")")
-            }
-            
-            // 修改为异步等待
-            return await withCheckedContinuation { continuation in
-                batch.commit { error in
-                    if let error = error {
-                        print("❌ 批量创建失败: \(error)")
-                    } else {
-                        print("✅ 成功创建所有系统预设项目")
-                        // 创建成功后重新加载数据
-                        Task {
-                            await loadExercises()
-                        }
-                    }
-                    continuation.resume()
+                // 创建特定的时间戳
+                let createdAt = Timestamp(date: Date(timeIntervalSince1970: 1704293287))
+                let updatedAt = Timestamp(date: Date(timeIntervalSince1970: 1704293297))
+                
+                // 预设项目数据
+                let systemExercises = [
+                    [
+                        "category": "胸部",
+                        "createdAt": createdAt,
+                        "description": "在15-30度上斜卧推凳上，双手握住杠铃，重点锻炼上胸肌。",
+                        "isSystemPreset": true,
+                        "name": "上斜卧推",
+                        "notes": "1. 控制斜度不要太大\n2. 肘部夹角约75度\n3. 感受上胸发力",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "背部",
+                        "createdAt": createdAt,
+                        "description": "握距略宽于肩宽的杠铃划船，主要锻炼中背肌群。",
+                        "isSystemPreset": true,
+                        "name": "杠铃划船",
+                        "notes": "1. 保持背部平直\n2. 收缩肩胛骨\n3. 控制下放速度",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "腿部",
+                        "createdAt": createdAt,
+                        "description": "使用深蹲架进行深蹲，主要锻炼大腿和臀部肌肉。",
+                        "isSystemPreset": true,
+                        "name": "深蹲",
+                        "notes": "1. 脚与肩同宽\n2. 保持膝盖不超过脚尖\n3. 下蹲至大腿与地面平行",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "肩部",
+                        "createdAt": createdAt,
+                        "description": "站姿哑铃侧平举，主要锻炼肩部中束。",
+                        "isSystemPreset": true,
+                        "name": "哑铃侧平举",
+                        "notes": "1. 保持手臂微弯\n2. 控制动作速度\n3. 不要借力摆动",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "手臂",
+                        "createdAt": createdAt,
+                        "description": "站姿哑铃弯举，主要锻炼肱二头肌。",
+                        "isSystemPreset": true,
+                        "name": "哑铃弯举",
+                        "notes": "1. 保持肘部固定\n2. 完全伸展手臂\n3. 收缩时完全收紧",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "核心",
+                        "createdAt": createdAt,
+                        "description": "平板支撑，主要锻炼核心肌群。",
+                        "isSystemPreset": true,
+                        "name": "平板支撑",
+                        "notes": "1. 保持身体一直线\n2. 收紧腹肌和臀肌\n3. 眼睛向下看",
+                        "unit": "秒",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "胸部",
+                        "createdAt": createdAt,
+                        "description": "平卧哑铃飞鸟，主要锻炼胸大肌中部。",
+                        "isSystemPreset": true,
+                        "name": "哑铃飞鸟",
+                        "notes": "1. 保持手臂微弯\n2. 控制动作范围\n3. 感受胸肌收缩",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "有氧",
+                        "createdAt": createdAt,
+                        "description": "跑步机上进行中等强度跑步，有助于提升心肺功能。",
+                        "isSystemPreset": true,
+                        "name": "跑步",
+                        "notes": "1. 保持均匀呼吸\n2. 适当调整坡度\n3. 穿着合适的跑鞋",
+                        "unit": "分钟",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "全身",
+                        "createdAt": createdAt,
+                        "description": "高强度间歇训练（HIIT），结合多种动作提升全身耐力和力量。",
+                        "isSystemPreset": true,
+                        "name": "HIIT",
+                        "notes": "1. 热身充分\n2. 控制动作质量\n3. 适当休息",
+                        "unit": "分钟",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "背部",
+                        "createdAt": createdAt,
+                        "description": "引体向上，主要锻炼背阔肌和肱二头肌。",
+                        "isSystemPreset": true,
+                        "name": "引体向上",
+                        "notes": "1. 全程控制动作\n2. 下放时缓慢\n3. 双手握距适中",
+                        "unit": "次",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "腿部",
+                        "createdAt": createdAt,
+                        "description": "腿举机上进行腿举，主要锻炼大腿前侧和臀部。",
+                        "isSystemPreset": true,
+                        "name": "腿举",
+                        "notes": "1. 脚掌放稳\n2. 推举时呼气\n3. 控制回收速度",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "背部",
+                        "createdAt": createdAt,
+                        "description": "硬拉，主要锻炼下背部、臀部和大腿后侧。",
+                        "isSystemPreset": true,
+                        "name": "硬拉",
+                        "notes": "1. 保持背部平直\n2. 使用腿部力量发力\n3. 控制杠铃路径",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "胸部",
+                        "createdAt": createdAt,
+                        "description": "俯卧撑，主要锻炼胸部、肩部和三头肌。",
+                        "isSystemPreset": true,
+                        "name": "俯卧撑",
+                        "notes": "1. 保持身体一直线\n2. 下压至胸部接近地面\n3. 呼吸均匀",
+                        "unit": "次",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "手臂",
+                        "createdAt": createdAt,
+                        "description": "绳索下压，主要锻炼肱三头肌。",
+                        "isSystemPreset": true,
+                        "name": "绳索下压",
+                        "notes": "1. 保持肘部固定\n2. 全程控制重量\n3. 收缩时完全伸展手臂",
+                        "unit": "kg",
+                        "updatedAt": updatedAt
+                    ],
+                    [
+                        "category": "核心",
+                        "createdAt": createdAt,
+                        "description": "仰卧起坐，主要锻炼腹直肌。",
+                        "isSystemPreset": true,
+                        "name": "仰卧起坐",
+                        "notes": "1. 保持下背部贴地\n2. 用腹肌发力起身\n3. 避免用力拉扯颈部",
+                        "unit": "次",
+                        "updatedAt": updatedAt
+                    ]
+                ] as [[String: Any]]
+                
+                print("📝 开始创建系统预设项目...")
+                
+                // 创建所有预设项目
+                for exercise in systemExercises {
+                    let docRef = db.collection("systemExercises").document()
+                    batch.setData(exercise, forDocument: docRef)
+                    print("📝 准备创建: \(exercise["name"] as? String ?? ""), 类别: \(exercise["category"] as? String ?? "")")
                 }
+                
+                // 提交批量操作
+                try await batch.commit()
+                print("✅ 系统预设项目创建成功")
+                
+                // 创建成功后重新加载数据
+                try await loadExercises()
+                
+            } catch {
+                print("❌ 创建系统预设项目失败: \(error.localizedDescription)")
             }
         }
     }
