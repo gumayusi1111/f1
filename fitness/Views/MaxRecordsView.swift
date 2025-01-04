@@ -1896,6 +1896,27 @@ struct CategoryButtonWithCount: View {
     let isSelected: Bool
     let action: () -> Void
     
+    private func getCategoryColor(_ category: String) -> Color {
+        switch category {
+        case "胸部":
+            return .red
+        case "背部":
+            return .blue
+        case "腿部":
+            return .purple
+        case "肩部":
+            return .orange
+        case "手臂":
+            return .green
+        case "核心":
+            return .pink
+        case "有氧":
+            return .cyan
+        default:
+            return .blue
+        }
+    }
+    
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
@@ -1908,7 +1929,7 @@ struct CategoryButtonWithCount: View {
                         Capsule()
                             .fill(isSelected ? 
                                 Color.white.opacity(0.2) : 
-                                Color.blue.opacity(0.1))
+                                getCategoryColor(title).opacity(0.1))
                     )
             }
             .font(.system(size: 14))
@@ -1918,9 +1939,12 @@ struct CategoryButtonWithCount: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(isSelected ? Color.blue : Color(.systemGray6))
+                    .fill(isSelected ? 
+                        getCategoryColor(title) : 
+                        Color(.systemGray6))
                     .shadow(color: isSelected ? 
-                        Color.blue.opacity(0.3) : Color.clear,
+                        getCategoryColor(title).opacity(0.3) : 
+                        Color.clear,
                         radius: 4, x: 0, y: 2)
             )
         }
