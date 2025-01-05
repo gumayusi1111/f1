@@ -237,7 +237,11 @@ struct AddPRRecordView: View {
     
     private func saveRecord() {
         log("开始保存记录...")
-        log("选择的数值: \(selectedValue)")
+        log("运动项目: \(exercise.name)")
+        log("当前最大记录: \(exercise.maxRecord ?? 0)")
+        log("新记录值: \(selectedValue)")
+        log("项目ID: \(exercise.id)")
+        log("是否系统预设: \(exercise.isSystemPreset)")
         
         guard !isLoading else {
             log("正在保存中,忽略重复请求", type: "WARN")
@@ -290,6 +294,7 @@ struct AddPRRecordView: View {
         ]
         
         log("准备保存的数据: \(recordData)")
+        log("保存路径: users/\(userId)/exercises/\(exercise.id)/records/\(newRecord.id)")
         
         let recordRef = db.collection("users")
             .document(userId)
@@ -366,50 +371,68 @@ struct AddPRRecordView: View {
     }
     
     private func loadRecords() {
-        log("开始加载历史记录...")
+        log("\n========== 开始加载记录 ==========")
+        log("项目名称: \(exercise.name)")
+        log("项目ID: \(exercise.id)")
+        log("当前最大记录: \(exercise.maxRecord ?? 0)")
+        log("是否系统预设: \(exercise.isSystemPreset)")
+        
+        let db = Firestore.firestore()
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
-            log("用户ID不存在", type: "ERROR")
+            log("❌ 用户ID不存在", type: "ERROR")
             return
         }
         
-        let db = Firestore.firestore()
+        log("查询路径: users/\(userId)/exercises/\(exercise.id)/records")
+        
+        // 添加数据库验证
+        db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .document(exercise.id)
+            .getDocument { (doc, error) in
+                if let error = error {
+                    log("❌ 验证项目失败: \(error.localizedDescription)", type: "ERROR")
+                } else if let data = doc?.data() {
+                    log("""
+                        ✅ 当前项目数据:
+                        - 名称: \(data["name"] ?? "未知")
+                        - 最大记录: \(data["maxRecord"] ?? "未知")
+                        - 最后记录时间: \(data["lastRecordDate"] ?? "未知")
+                        - 是否系统预设: \(data["isSystemPreset"] ?? "未知")
+                        """)
+                } else {
+                    log("⚠️ 项目文档不存在", type: "WARN")
+                }
+            }
+        
+        // 继续加载记录...
         db.collection("users")
             .document(userId)
             .collection("exercises")
             .document(exercise.id)
             .collection("records")
             .order(by: "date", descending: true)
-            .limit(to: 20)
             .getDocuments { snapshot, error in
                 if let error = error {
-                    log("加载失败: \(error.localizedDescription)", type: "ERROR")
-                    showError = true
-                    errorMessage = "加载失败: \(error.localizedDescription)"
+                    log("❌ 加载记录失败: \(error.localizedDescription)", type: "ERROR")
                     return
                 }
                 
-                log("获取到 \(snapshot?.documents.count ?? 0) 条记录")
-                records = snapshot?.documents.compactMap { doc -> ExerciseRecord? in
-                    let data = doc.data()
-                    log("解析记录: \(data)")
-                    
-                    guard let value = data["value"] as? Double,
-                          let date = (data["date"] as? Timestamp)?.dateValue(),
-                          let isPR = data["isPR"] as? Bool
-                    else {
-                        log("记录数据格式错误: \(data)", type: "ERROR")
-                        return nil
+                if let documents = snapshot?.documents {
+                    log("📊 找到 \(documents.count) 条记录")
+                    documents.forEach { doc in
+                        log("""
+                            记录详情:
+                            - ID: \(doc.documentID)
+                            - 数值: \(doc.data()["value"] ?? "未知")
+                            - 日期: \(doc.data()["date"] ?? "未知")
+                            - 是否PR: \(doc.data()["isPR"] ?? "未知")
+                            """)
                     }
-                    
-                    return ExerciseRecord(
-                        id: doc.documentID,
-                        value: value,
-                        date: date,
-                        isPR: isPR
-                    )
-                } ?? []
-                
-                log("成功加载 \(records.count) 条记录")
+                } else {
+                    log("⚠️ 没有找到记录", type: "WARN")
+                }
             }
     }
     
@@ -481,54 +504,78 @@ struct AddPRRecordView: View {
     }
     
     private func updateMaxRecordAfterDelete() {
-        log("更新最大记录...")
+        log("开始更新最大记录...")
+        log("当前项目: \(exercise.name)")
         
-        // 查找剩余记录中的最大值
-        if let newMax = records.max(by: { $0.value < $1.value }) {
-            let db = Firestore.firestore()
-            guard let userId = UserDefaults.standard.string(forKey: "userId") else { return }
-            
-            let exerciseRef = db.collection("users")
-                .document(userId)
-                .collection("exercises")
-                .document(exercise.id)
-            
-            exerciseRef.updateData([
-                "maxRecord": newMax.value,
-                "lastRecordDate": Timestamp(date: newMax.date)
-            ]) { error in
+        let db = Firestore.firestore()
+        guard let userId = UserDefaults.standard.string(forKey: "userId") else { 
+            log("❌ 用户ID不存在", type: "ERROR")
+            return 
+        }
+        
+        // 先获取所有记录
+        db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .document(exercise.id)
+            .collection("records")
+            .order(by: "value", descending: true)
+            .limit(to: 1)
+            .getDocuments { snapshot, error in
                 if let error = error {
-                    log("更新最大记录失败: \(error.localizedDescription)", type: "ERROR")
+                    log("❌ 获取记录失败: \(error.localizedDescription)", type: "ERROR")
+                    return
+                }
+                
+                if let maxRecord = snapshot?.documents.first {
+                    // 找到新的最大值
+                    if let newMaxValue = maxRecord.data()["value"] as? Double,
+                       let date = (maxRecord.data()["date"] as? Timestamp)?.dateValue() {
+                        log("✅ 找到新的最大记录: \(newMaxValue)")
+                        
+                        // 更新运动项目的最大记录
+                        db.collection("users")
+                            .document(userId)
+                            .collection("exercises")
+                            .document(exercise.id)
+                            .updateData([
+                                "maxRecord": newMaxValue,
+                                "lastRecordDate": Timestamp(date: date)
+                            ]) { error in
+                                if let error = error {
+                                    log("❌ 更新最大记录失败: \(error.localizedDescription)", type: "ERROR")
+                                } else {
+                                    log("✅ 最大记录已更新为: \(newMaxValue)")
+                                    DispatchQueue.main.async {
+                                        onRecordUpdate?()
+                                    }
+                                }
+                            }
+                    } else {
+                        log("⚠️ 记录数据格式错误")
+                    }
                 } else {
-                    log("最大记录更新成功: \(newMax.value)")
-                    // 重新加载历史最佳
-                    exerciseRef.getDocument { (document, _) in
-                        if document != nil {
-                            DispatchQueue.main.async {
-                                onRecordUpdate?()
+                    // 如果没有记录了，清除最大记录
+                    log("📝 没有找到任何记录，清除最大记录")
+                    db.collection("users")
+                        .document(userId)
+                        .collection("exercises")
+                        .document(exercise.id)
+                        .updateData([
+                            "maxRecord": FieldValue.delete(),
+                            "lastRecordDate": FieldValue.delete()
+                        ]) { error in
+                            if let error = error {
+                                log("❌ 清除最大记录失败: \(error.localizedDescription)", type: "ERROR")
+                            } else {
+                                log("✅ 已清除最大记录")
+                                DispatchQueue.main.async {
+                                    onRecordUpdate?()
+                                }
                             }
                         }
-                    }
                 }
             }
-        } else {
-            // 如果没有剩余记录,清除最大记录
-            let db = Firestore.firestore()
-            guard let userId = UserDefaults.standard.string(forKey: "userId") else { return }
-            
-            db.collection("users")
-                .document(userId)
-                .collection("exercises")
-                .document(exercise.id)
-                .updateData([
-                    "maxRecord": FieldValue.delete(),
-                    "lastRecordDate": FieldValue.delete()
-                ]) { error in
-                    if error == nil {
-                        onRecordUpdate?()
-                    }
-                }
-        }
     }
     
     private func playSuccessSound() {
