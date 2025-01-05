@@ -1750,7 +1750,7 @@ struct PRRecordCard: View {
     let exercise: Exercise
     let maxRecord: Double?
     let lastRecordDate: Date?
-    @State private var showingDetail = false
+    @State private var showingAddRecord = false // 添加这一行
     
     var body: some View {
         Button(action: { 
@@ -1760,9 +1760,9 @@ struct PRRecordCard: View {
             generator.impactOccurred()
             
             // 播放系统音效
-            AudioServicesPlaySystemSound(1520) // 使用提示音
+            AudioServicesPlaySystemSound(1520)
             
-            showingDetail = true 
+            showingAddRecord = true // 修改这里,显示添加记录页面
         }) {
             VStack(alignment: .leading, spacing: 12) {
                 // 标题和类别
@@ -1842,6 +1842,9 @@ struct PRRecordCard: View {
             .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
         }
         .buttonStyle(PRCardButtonStyle()) // 添加自定义按钮样式
+        .sheet(isPresented: $showingAddRecord) {
+            AddPRRecordView(exercise: exercise)
+        }
     }
 }
 
