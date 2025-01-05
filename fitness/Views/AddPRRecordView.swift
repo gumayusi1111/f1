@@ -64,7 +64,21 @@ struct AddPRRecordView: View {
         return Array(minValue...maxValue)
     }
 
-    private let decimalParts = [0, 25, 50, 75] // 对应 0.00, 0.25, 0.50, 0.75
+    // 修改小数部分选项
+    private var decimalParts: [Int] {
+        switch exercise.unit {
+        case "秒":
+            return Array(0...9)  // 秒的小数部分0-9
+        case "分钟":
+            return Array(0...59) // 分钟的小数部分0-59秒
+        case "m":
+            return [0, 5]  // 米的小数部分只有0和5
+        case "km", "mile":
+            return [0, 25, 50, 75] // 公里和英里的小数部分
+        default:
+            return [0, 25, 50, 75] // 重量的小数部分
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -104,7 +118,10 @@ struct AddPRRecordView: View {
                         
                         // 数值选择器
                         HStack {
-                            if exercise.unit == "kg" || exercise.unit == "lbs" {
+                            if exercise.unit == "kg" || exercise.unit == "lbs" || 
+                               exercise.unit == "秒" || exercise.unit == "分钟" || 
+                               exercise.unit == "m" || exercise.unit == "km" || 
+                               exercise.unit == "mile" {
                                 // 整数部分选择器
                                 Picker("整数", selection: $selectedIntegerPart) {
                                     ForEach(integerRange, id: \.self) { value in
@@ -120,13 +137,13 @@ struct AddPRRecordView: View {
                                 
                                 // 小数部分选择器
                                 Picker("小数", selection: $selectedDecimalPart) {
-                                    ForEach(decimalParts.indices, id: \.self) { index in
-                                        Text("\(decimalParts[index])")
-                                            .tag(decimalParts[index])
+                                    ForEach(decimalParts, id: \.self) { value in
+                                        Text(exercise.unit == "分钟" ? "\(value)秒" : "\(value)")
+                                            .tag(value)
                                     }
                                 }
                                 .pickerStyle(.wheel)
-                                .frame(width: 60, height: 120)
+                                .frame(width: exercise.unit == "分钟" ? 100 : 60, height: 120)
                                 
                                 Text(exercise.unit ?? "")
                                     .font(.title3)
@@ -328,12 +345,22 @@ struct AddPRRecordView: View {
         log("- 类别: \(exercise.category)")
         log("- 当前最大记录: \(exercise.maxRecord ?? 0)")
         
+        // 计算最终值
         let finalValue = if exercise.unit == "kg" || exercise.unit == "lbs" {
             Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0
+        } else if exercise.unit == "秒" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0
+        } else if exercise.unit == "分钟" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 60.0
+        } else if exercise.unit == "m" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0  // 0.5米 = 0.5
+        } else if exercise.unit == "km" || exercise.unit == "mile" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0  // 和重量单位一样的处理方式
         } else {
             selectedValue
         }
         
+        // 创建记录
         let newRecord = ExerciseRecord(
             id: UUID().uuidString,
             value: finalValue,
@@ -346,6 +373,7 @@ struct AddPRRecordView: View {
         log("- 数值: \(newRecord.value)")
         log("- 是否为PR: \(newRecord.isPR)")
         
+        // 保存到数据库
         let recordData: [String: Any] = [
             "id": newRecord.id,
             "value": Double(finalValue),
