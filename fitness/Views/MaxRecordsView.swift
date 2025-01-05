@@ -106,15 +106,23 @@ struct MaxRecordsView: View {
     @State private var isSheetPresented = false
     
     init() {
-        setupFirestore()
+        // 确保只在首次加载时初始化
+        if UserDefaults.standard.bool(forKey: "firestoreInitialized") == false {
+            setupFirestore()
+        }
     }
     
     private func setupFirestore() {
-        let db = Firestore.firestore()
-        let settings = FirestoreSettings()
-        // 使用新的 API 设置缓存，不需要传参数
-        settings.cacheSettings = PersistentCacheSettings()
-        db.settings = settings
+        // 只在第一次初始化时设置缓存
+        if UserDefaults.standard.bool(forKey: "firestoreInitialized") == false {
+            let db = Firestore.firestore()
+            let settings = FirestoreSettings()
+            settings.cacheSettings = PersistentCacheSettings()
+            db.settings = settings
+            
+            // 标记已初始化
+            UserDefaults.standard.set(true, forKey: "firestoreInitialized")
+        }
     }
     
     // 检查是否可以刷新

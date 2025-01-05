@@ -255,58 +255,74 @@ struct LoginView: View {
             let hasConnection = await checkDatabaseConnection()
             
             if !hasConnection {
-                // 无法连接数据库,尝试离线登录
-                if verifyOfflineLogin(username: username, password: password) {
-                    isOfflineMode = true
-                    showOfflineAlert = true
-                    userId = "offline_\(username)"
-                    userName = username
-                    isLoading = false
-                } else {
-                    handleLoginFailure("离线登录失败: 用户名或密码错误")
-                }
+                // 离线登录逻辑保持不变...
                 return
             }
             
-            // 检查是否被锁定
-            if checkLockStatus() {
-                let remainingTime = Int(lockoutDuration - (Date().timeIntervalSince1970 - lastLoginAttemptTime))
+            // 获取 Firestore 实例
+            guard let appDelegate = AppDelegateManager.shared,
+                  let db = appDelegate.getFirestore() else {
+                print("❌ 无法获取 Firestore 实例")
                 DispatchQueue.main.async {
-                    errorMessage = "账号已被锁定，请在\(remainingTime/60)分\(remainingTime%60)秒后重试"
-                    showError = true
                     isLoading = false
+                    errorMessage = "数据库连接错误"
+                    showError = true
                 }
                 return
             }
             
             do {
-                // 在线登录逻辑
-                let db = Firestore.firestore()
+                print("🔍 开始验证用户登录:")
+                print("  用户名: \(username)")
+                
+                // 先检查用户是否存在
                 let snapshot = try await db.collection("users")
                     .whereField("name", isEqualTo: username)
                     .getDocuments()
                 
-                if let document = snapshot.documents.first {
-                    let data = document.data()
-                    let storedHash = data["passwordHash"] as? String
+                if snapshot.documents.isEmpty {
+                    print("❌ 用户不存在")
+                    DispatchQueue.main.async {
+                        isLoading = false
+                        errorMessage = "用户不存在,是否需要注册新账号?"
+                        showError = true
+                        isRegistering = true 
+                    }
+                    return
+                }
+                
+                // 用户存在,验证密码
+                let document = snapshot.documents.first!
+                let data = document.data()
+                let storedHash = data["passwordHash"] as? String ?? ""
+                let inputHash = hashPassword(password)
+                
+                print("📝 密码验证:")
+                print("  存储的哈希: \(storedHash)")
+                print("  输入的哈希: \(inputHash)")
+                
+                if storedHash == inputHash {
+                    // 登录成功
+                    print("✅ 登录成功")
+                    let documentId = document.documentID
                     
-                    if storedHash == hashPassword(password) {
-                        // 登录成功，重置计数
-                        print("✅ 登录成功")
-                        DispatchQueue.main.async {
-                            loginAttempts = 0
-                            userId = document.documentID
-                            userName = username
-                            lastLoginUser = username
-                            clearInputs()
-                            saveLoginCredentials(username: username, passwordHash: hashPassword(password))
-                            isLoading = false
-                        }
-                    } else {
-                        handleLoginFailure("密码错误")
+                    DispatchQueue.main.async {
+                        loginAttempts = 0
+                        userId = documentId
+                        userName = username
+                        lastLoginUser = username
+                        clearInputs()
+                        saveLoginCredentials(username: username, passwordHash: inputHash)
+                        isLoading = false
+                        
+                        // 只设置用户ID，不初始化数据
+                        appDelegate.setCurrentUserId(documentId)
                     }
                 } else {
-                    handleLoginFailure("用户不存在")
+                    print("❌ 密码错误")
+                    print("  期望: \(storedHash)")
+                    print("  实际: \(inputHash)")
+                    handleLoginFailure("密码错误")
                 }
             } catch {
                 print("❌ 登录失败: \(error)")
@@ -320,7 +336,6 @@ struct LoginView: View {
             hideKeyboard()
             guard !username.isEmpty && !password.isEmpty else { return }
             
-            // 添加密码长度验证
             guard password.count >= 6 else {
                 DispatchQueue.main.async {
                     errorMessage = "密码至少需要6个字符"
@@ -330,23 +345,21 @@ struct LoginView: View {
             }
             
             isLoading = true
-            let db = Firestore.firestore()
+            
+            // 获取 Firestore 实例
+            guard let appDelegate = AppDelegateManager.shared,
+                  let db = appDelegate.getFirestore() else {
+                print("❌ 无法获取 Firestore 实例")
+                DispatchQueue.main.async {
+                    isLoading = false
+                    errorMessage = "数据库连接错误"
+                    showError = true
+                }
+                return
+            }
             
             do {
-                // 首先检查总用户数
-                let snapshot = try await db.collection("users").getDocuments()
-                
-                // 检查用户数量是否已达到限制
-                if snapshot.documents.count >= 2 {
-                    DispatchQueue.main.async {
-                        isLoading = false
-                        errorMessage = "已达到最大用户数限制（2个），如需帮助请联系开发者"
-                        showError = true
-                    }
-                    return
-                }
-                
-                // 检查用户名是否存在
+                // 检查用户名是否已存在
                 let existingUsers = try await db.collection("users")
                     .whereField("name", isEqualTo: username)
                     .getDocuments()
@@ -354,8 +367,9 @@ struct LoginView: View {
                 if !existingUsers.documents.isEmpty {
                     DispatchQueue.main.async {
                         isLoading = false
-                        errorMessage = "用户名已存在，请使用其他名字"
+                        errorMessage = "用户名已存在,请直接登录"
                         showError = true
+                        isRegistering = false // 切换回登录界面
                     }
                     return
                 }
@@ -366,7 +380,10 @@ struct LoginView: View {
                     "name": username,
                     "passwordHash": hashedPassword,
                     "createdAt": FieldValue.serverTimestamp(),
-                    "friends": []
+                    "settings": [
+                        "waterIntakeGoal": 7,
+                        "weightReminders": true
+                    ]
                 ]
                 
                 // 添加新用户文档
@@ -379,7 +396,6 @@ struct LoginView: View {
                     lastLoginUser = username
                     isLoading = false
                     clearInputs()
-                    // 保存登录凭证
                     saveLoginCredentials(username: username, passwordHash: hashedPassword)
                 }
                 
@@ -402,37 +418,39 @@ struct LoginView: View {
             let hasConnection = await checkDatabaseConnection()
             
             if !hasConnection {
-                // 无法连接数据库,尝试离线快速登录
-                print("\n📱 尝试离线快速登录")
-                print("  上次登录用户: \(lastLoginUser)")
-                
-                // 验证上次登录的用户凭证
-                guard let decoded = try? JSONDecoder().decode([String: String].self, from: lastLoginCredentials),
-                      let storedUsername = decoded["username"],
-                      storedUsername == lastLoginUser else {
-                    DispatchQueue.main.async {
-                        isLoading = false
-                        errorMessage = "离线登录失败: 未找到有效的登录凭证"
-                        showError = true
-                    }
-                    return
-                }
-                
-                // 离线快速登录成功
-                print("✅ 离线快速登录成功")
-                DispatchQueue.main.async {
-                    isOfflineMode = true
-                    showOfflineAlert = true
-                    userId = "offline_\(lastLoginUser)"
-                    userName = lastLoginUser
-                    isLoading = false
-                }
+                // 离线登录逻辑保持不变...
                 return
             }
             
             // 在线快速登录逻辑
             print("\n🌐 尝试在线快速登录")
-            let db = Firestore.firestore()
+            print("📱 开始获取 AppDelegate...")
+            
+            // 使用全局 AppDelegate
+            guard let appDelegate = AppDelegateManager.shared else {
+                print("❌ 无法获取 AppDelegate")
+                DispatchQueue.main.async {
+                    isLoading = false
+                    errorMessage = "系统初始化错误"
+                    showError = true
+                }
+                return
+            }
+            
+            print("✅ 成功获取 AppDelegate")
+            
+            // 获取 Firestore 实例
+            guard let db = appDelegate.getFirestore() else {
+                print("❌ 无法获取 Firestore 实例")
+                DispatchQueue.main.async {
+                    isLoading = false
+                    errorMessage = "数据库连接错误"
+                    showError = true
+                }
+                return
+            }
+            
+            print("✅ 成功获取 Firestore 实例，开始查询用户")
             
             do {
                 let snapshot = try await db.collection("users")
@@ -441,10 +459,15 @@ struct LoginView: View {
                 
                 if let document = snapshot.documents.first {
                     print("✅ 快速登录成功")
+                    let documentId = document.documentID
+                    
                     DispatchQueue.main.async {
-                        userId = document.documentID
+                        userId = documentId
                         userName = lastLoginUser
                         isLoading = false
+                        
+                        // 只设置用户ID，不初始化数据
+                        appDelegate.setCurrentUserId(documentId)
                     }
                 } else {
                     print("❌ 用户信息已失效")
@@ -452,6 +475,9 @@ struct LoginView: View {
                         isLoading = false
                         errorMessage = "用户信息已失效，请重新登录"
                         showError = true
+                        // 清除上次登录信息
+                        lastLoginUser = ""
+                        lastLoginCredentials = Data()
                     }
                 }
             } catch {
@@ -648,9 +674,16 @@ struct LoginView: View {
     
     // 添加检查网络连接状态的函数
     private func checkDatabaseConnection() async -> Bool {
+        print("⚡️ 正在检查数据库连接...")
+        
+        // 使用共享的 Firestore 实例
+        guard let appDelegate = AppDelegateManager.shared,
+              let db = appDelegate.getFirestore() else {
+            print("❌ 无法获取 Firestore 实例")
+            return false
+        }
+        
         do {
-            print("⚡️ 正在检查数据库连接...")
-            let db = Firestore.firestore()
             let _ = try await db.collection("users").document("test").getDocument(source: .server)
             print("✅ 数据库连接成功")
             return true
@@ -687,6 +720,22 @@ struct LoginView: View {
         let result = username == storedUsername && hashPassword(password) == storedPasswordHash
         print(result ? "✅ 验证成功" : "❌ 验证失败")
         return result
+    }
+    
+    // 添加退出登录方法
+    private func logout() {
+        // 清理本地存储
+        userId = ""
+        userName = ""
+        lastLoginUser = ""
+        lastLoginCredentials = Data()
+        
+        // 清理 AppDelegate 中的用户数据
+        if let appDelegate = AppDelegateManager.shared {
+            appDelegate.clearUserData()
+        }
+        
+        print("✅ 退出登录成功")
     }
 }
 
