@@ -85,6 +85,11 @@ struct WeightView: View {
     
     @State private var showHistory = false  // 修改初始值为 false，这样第一次打开时就是收起状态
     
+    // 1. 添加状态变量（在 WeightView 结构体顶部）
+    @State private var showDeleteSuccessToast = false
+    @State private var deletedWeightValue: Double = 0
+    @State private var showDeleteErrorToast = false
+    
     let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -383,6 +388,37 @@ struct WeightView: View {
                 .animation(.default, value: isOffline),
                 alignment: .top
             )
+            .overlay(alignment: .top) {
+                if showDeleteSuccessToast {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("\(deletedWeightValue, specifier: "%.1f")kg 记录已删除")
+                            .font(.subheadline)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemBackground))
+                    .cornerRadius(8)
+                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                
+                if showDeleteErrorToast {
+                    HStack(spacing: 8) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.red)
+                        Text("删除失败，请重试")
+                            .font(.subheadline)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemBackground))
+                    .cornerRadius(8)
+                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
     }
     
@@ -991,7 +1027,15 @@ struct WeightView: View {
                 
                 Spacer()
                 
-                Button(action: onDelete) {
+                // 2. 修改 WeightRecordRow 中的删除按钮
+                Button(action: {
+                    // 添加触觉反馈
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.prepare()
+                    generator.impactOccurred()
+                    
+                    onDelete()
+                }) {
                     Image(systemName: "trash")
                         .foregroundColor(.red)
                         .opacity(0.7)
@@ -1762,7 +1806,18 @@ struct WeightView: View {
         batch.commit { error in
             if let error = error {
                 print("❌ 删除记录失败: \(error)")
-                self.showError("删除记录失败")
+                // 失败时显示错误提示
+                DispatchQueue.main.async {
+                    withAnimation {
+                        self.showDeleteErrorToast = true
+                    }
+                    // 3秒后隐藏提示
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        withAnimation {
+                            self.showDeleteErrorToast = false
+                        }
+                    }
+                }
                 return
             }
             
@@ -1771,6 +1826,18 @@ struct WeightView: View {
                 self.weightRecords.removeAll { $0.id == record.id }
                 self.saveToCacheStorage(self.weightRecords)
                 self.lastSyncDate = Date()
+                
+                // 成功时显示成功提示
+                self.deletedWeightValue = record.weight
+                withAnimation {
+                    self.showDeleteSuccessToast = true
+                }
+                // 3秒后隐藏提示
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    withAnimation {
+                        self.showDeleteSuccessToast = false
+                    }
+                }
             }
         }
     }
