@@ -17,31 +17,54 @@ struct AddPRRecordView: View {
     @State private var recordToDelete: ExerciseRecord?
     @State private var showDeleteSuccessAnimation = false
     @State private var deletedRecordId: String?
+    @State private var selectedIntegerPart: Int = 0
+    @State private var selectedDecimalPart: Int = 0 // 0=0.00, 1=0.25, 2=0.50, 3=0.75
     var onRecordUpdate: (() -> Void)?
     
     // 修改滚轮选择器的范围计算
     private var valueRange: [Double] {
-        var values: [Double] = []
-        let baseValue = exercise.maxRecord ?? 50.0 // 使用当前记录或默认值
-        let minValue = max(0, baseValue * 0.8) // 下限80%
-        let maxValue = baseValue * 1.2 // 上限120%
-        
-        // 确保当前值在范围内
-        var current = minValue
-        while current <= maxValue {
-            values.append(current)
-            current += 0.5
+        if exercise.unit == "组" || exercise.unit == "次" {
+            // 如果是组或次为单位,返回整数部分和小数部分的组合
+            var values: [Double] = []
+            let baseValue = Int(exercise.maxRecord ?? 10)
+            let minValue = max(1, Int(Double(baseValue) * 0.8))
+            let maxValue = Int(Double(baseValue) * 1.2)
+            
+            // 为每个整数添加0和0.5的小数部分
+            for i in minValue...maxValue {
+                values.append(Double(i))     // 整数.0
+                values.append(Double(i) + 0.5) // 整数.5
+            }
+            return values
+        } else {
+            // 其他单位保持原有逻辑
+            var values: [Double] = []
+            let baseValue = exercise.maxRecord ?? 50.0
+            let minValue = max(0, baseValue * 0.8)
+            let maxValue = baseValue * 1.2
+            var current = minValue
+            while current <= maxValue {
+                values.append(current)
+                current += 0.5
+            }
+            if let currentMax = exercise.maxRecord,
+               !values.contains(currentMax) {
+                values.append(currentMax)
+                values.sort()
+            }
+            return values
         }
-        
-        // 如果当前记录值不在生成的范围内,添加它
-        if let currentMax = exercise.maxRecord,
-           !values.contains(currentMax) {
-            values.append(currentMax)
-            values.sort() // 保持数组有序
-        }
-        
-        return values
     }
+
+    // 添加整数和小数部分的范围计算
+    private var integerRange: [Int] {
+        let baseValue = Int(exercise.maxRecord ?? 50)
+        let minValue = max(1, Int(Double(baseValue) * 0.8))
+        let maxValue = Int(Double(baseValue) * 1.2)
+        return Array(minValue...maxValue)
+    }
+
+    private let decimalParts = [0, 25, 50, 75] // 对应 0.00, 0.25, 0.50, 0.75
 
     var body: some View {
         NavigationView {
@@ -81,19 +104,50 @@ struct AddPRRecordView: View {
                         
                         // 数值选择器
                         HStack {
-                            Picker("选择数值", selection: $selectedValue) {
-                                ForEach(valueRange, id: \.self) { value in
-                                    Text("\(value, specifier: "%.1f")")
-                                        .tag(value)
+                            if exercise.unit == "kg" || exercise.unit == "lbs" {
+                                // 整数部分选择器
+                                Picker("整数", selection: $selectedIntegerPart) {
+                                    ForEach(integerRange, id: \.self) { value in
+                                        Text("\(value)").tag(value)
+                                    }
                                 }
+                                .pickerStyle(.wheel)
+                                .frame(width: 80, height: 120)
+                                
+                                Text(".")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                
+                                // 小数部分选择器
+                                Picker("小数", selection: $selectedDecimalPart) {
+                                    ForEach(decimalParts.indices, id: \.self) { index in
+                                        Text("\(decimalParts[index])")
+                                            .tag(decimalParts[index])
+                                    }
+                                }
+                                .pickerStyle(.wheel)
+                                .frame(width: 60, height: 120)
+                                
+                                Text(exercise.unit ?? "")
+                                    .font(.title3)
+                                    .foregroundColor(.secondary)
+                                    .padding(.leading, 8)
+                            } else {
+                                // 原有的其他单位选择器保持不变
+                                Picker("选择数值", selection: $selectedValue) {
+                                    ForEach(valueRange, id: \.self) { value in
+                                        Text("\(value, specifier: "%.1f")")
+                                            .tag(value)
+                                    }
+                                }
+                                .pickerStyle(.wheel)
+                                .frame(height: 120)
+                                
+                                Text(exercise.unit ?? "")
+                                    .font(.title3)
+                                    .foregroundColor(.secondary)
+                                    .padding(.leading)
                             }
-                            .pickerStyle(.wheel)
-                            .frame(height: 120)
-                            
-                            Text(exercise.unit ?? "")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-                                .padding(.leading)
                         }
                         .padding(.vertical, 8)
                         
@@ -274,11 +328,17 @@ struct AddPRRecordView: View {
         log("- 类别: \(exercise.category)")
         log("- 当前最大记录: \(exercise.maxRecord ?? 0)")
         
+        let finalValue = if exercise.unit == "kg" || exercise.unit == "lbs" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0
+        } else {
+            selectedValue
+        }
+        
         let newRecord = ExerciseRecord(
             id: UUID().uuidString,
-            value: selectedValue,
+            value: finalValue,
             date: now,
-            isPR: exercise.maxRecord == nil || selectedValue > exercise.maxRecord!
+            isPR: exercise.maxRecord == nil || finalValue > exercise.maxRecord!
         )
         
         log("新记录信息:")
@@ -288,7 +348,7 @@ struct AddPRRecordView: View {
         
         let recordData: [String: Any] = [
             "id": newRecord.id,
-            "value": Double(selectedValue),
+            "value": Double(finalValue),
             "date": Timestamp(date: now),
             "isPR": newRecord.isPR
         ]
@@ -332,7 +392,7 @@ struct AddPRRecordView: View {
                     .collection("exercises")
                     .document(exercise.id)
                     .updateData([
-                        "maxRecord": Double(selectedValue),
+                        "maxRecord": Double(finalValue),
                         "lastRecordDate": Timestamp(date: now)
                     ]) { error in
                         if let error = error {
