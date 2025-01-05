@@ -329,6 +329,14 @@ struct MaxRecordsView: View {
                                             }.count
                                         
                                         Button(action: { 
+                                            // 添加触觉反馈
+                                            let generator = UIImpactFeedbackGenerator(style: .light)
+                                            generator.prepare()
+                                            generator.impactOccurred()
+                                            
+                                            // 播放系统音效
+                                            AudioServicesPlaySystemSound(1104)
+                                            
                                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                                 selectedPRCategory = category
                                             }
