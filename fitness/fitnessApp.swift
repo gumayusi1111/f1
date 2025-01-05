@@ -153,6 +153,7 @@ class AppDelegateManager {
 @main
 struct fitnessApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @AppStorage("userId") private var userId: String = ""
     
     init() {
         // 保存 AppDelegate 实例
@@ -161,7 +162,11 @@ struct fitnessApp: App {
     
     var body: some Scene {
         WindowGroup {
-            SplashView()
+            if userId.isEmpty {
+                LoginView()
+            } else {
+                ContentView()
+            }
         }
     }
 }

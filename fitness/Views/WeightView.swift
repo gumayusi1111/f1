@@ -160,264 +160,292 @@ struct WeightView: View {
     @StateObject private var offlineManager = OfflineManager()
     @StateObject private var connectivityManager = ConnectivityManager()
     
+    // 添加监听器引用
+    private var waterIntakeListener: ListenerRegistration?
+    
+    // 将 waterIntakeListener 移到一个单独的 ObservableObject 类中
+    @StateObject private var waterIntakeManager = WaterIntakeManager()
+    @Environment(\.dismiss) private var dismiss
+    
     var body: some View {
-        NavigationView {
-            ScrollView {
-                if isLoading {
-                    WeightViewSkeleton()  // 显示骨架屏
-                        .transition(.opacity)
-                } else {
-                    ScrollViewReader { proxy in
-                        VStack(spacing: 20) {
-                            // 显示同步状态
-                            if showSyncResult {
-                                Text(syncResultMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .padding(.top, 8)
-                            }
-                            
-                            Text(lastSyncTimeString)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            // BMI 卡片
-                            bmiCard
-                            
-                            // 喝水卡片
-                            waterIntakeCard
-                            
-                            // 图表切换
-                            Picker("显示指标", selection: $selectedMetric) {
-                                ForEach(WeightMetric.allCases, id: \.self) { metric in
-                                    Text(metric.rawValue).tag(metric)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .padding(.horizontal)
-                            
-                            // 图表区域
-                            chartSection
-                            
-                            // 目标进度卡片
-                            goalProgressCard
-                            
-                            // 统计分析部分
-                            analysisSection
-                                .id("analysis")
-                            
-                            // 记录列表
-                            recordsList
-                        }
-                        .padding()
-                        .onChange(of: scrollToAnalysis) { oldValue, newValue in
-                            if newValue {
-                                withAnimation {
-                                    proxy.scrollTo("analysis", anchor: .top)
-                                }
-                                // 重置状态
-                                scrollToAnalysis = false
-                            }
-                        }
-                    }
-                    .transition(.opacity)
-                }
-            }
-            .animation(.default, value: isLoading)
-            .refreshable {
-                await handleRefresh()
-            }
-            .navigationTitle("体重记录")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button(action: { showingAddSheet = true }) {
-                            Label("添加记录", systemImage: "plus")
-                        }
-                        Button(action: { showingGoalSheet = true }) {
-                            Label("设置目标", systemImage: "target")
-                        }
-                        Button(action: {
-                            withAnimation {
-                                scrollToAnalysis = true
-                            }
-                        }) {
-                            Label("数据分析", systemImage: "chart.bar.xaxis")
-                        }
-                        
-                        Divider()
-                        
-                        // 添加测试通知按钮
-                        Button(action: testNotifications) {
-                            Label("测试喝水通知", systemImage: "drop.circle")
-                        }
-                        Button(action: testWeightNotifications) {
-                            Label("测试体重通知", systemImage: "scalemass.fill")  // 改用 scalemass.fill 替代 scale.circle
-                        }
-                        
-                        Button(action: generateLocalTestData) {
-                            Label("生成测试数据", systemImage: "doc.badge.plus")
-                        }
-                        Button(action: clearLocalTestData) {
-                            Label("清除测试数据", systemImage: "trash")
-                                .foregroundColor(.red)
-                        }
-                        
-                        Button(action: { showOfflineTestSheet = true }) {
-                            Label("测试离线功能", systemImage: "network.slash")
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("操作")
-                            Image(systemName: "ellipsis.circle.fill")
-                                .font(.title2)
-                        }
-                        .foregroundColor(.blue)
-                    }
-                }
-            }
-            .sheet(isPresented: $showingAddSheet) {
-                addWeightSheet
-            }
-            .sheet(isPresented: $showingHeightSheet) {
-                heightInputSheet
-            }
-            .sheet(isPresented: $showingGoalSheet) {
-                goalWeightSheet
-            }
-            .sheet(isPresented: $showOfflineTestSheet) {
-                offlineTestSheet
-            }
-            .onAppear {
-                if shouldReload() {
-                    isLoading = true  // 立即显示骨架屏
-                    lastLoadTime = Date()
-                    
-                    // 先尝试加载缓存
-                    let cachedRecords = loadFromCacheStorage()
-                    if !cachedRecords.isEmpty {
-                        DispatchQueue.main.async {
-                            self.weightRecords = cachedRecords
-                            self.isLoading = false
-                        }
-                    }
-                    
-                    // 然后异步加载最新数据
-                    loadUserData()
-                    loadWeightRecords()
-                }
-                // 检查并重置饮水量
-                checkAndResetWaterIntake()
-                // 加载今日喝水记录
-                loadTodayWaterIntake()
-                print("\n📱 检查喝水记录同步状态...")
-                // 如果距离上次同步超过5分钟，强制同步
-                if Date().timeIntervalSince(lastWaterSync) > 300 {
-                    print("⚡️ 需要同步喝水记录")
-                    updateWaterIntake()
-                } else {
-                    print("✓ 喝水记录同步状态正常")
-                }
-                
-                // 请求通知权限并设置提醒
-                if !waterNotificationsEnabled {
-                    requestNotificationPermission()
-                } else {
-                    scheduleWaterReminders()
-                }
-                
-                // 添加通知监听
-                NotificationCenter.default.addObserver(
-                    forName: NSNotification.Name("DrinkWaterAction"),
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    if waterIntakeToday < dailyWaterGoal {
-                        waterIntakeToday += 1
-                        updateWaterIntake()
-                    }
-                }
-                
-                // 设置体重记录提醒
-                scheduleWeightReminders()
-            }
-            .onChange(of: userHeight) { oldHeight, newHeight in
-                print("📊 身高数据更新: \(newHeight)cm")
-                // 这里可以添加需要随身高变化而更新的UI逻辑
-            }
-            .alert("加载失败", isPresented: $showError) {
-                Button("重试") {
-                    loadWeightRecords()
-                }
-                Button("确定", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
-            }
-            .alert("删除所有数据", isPresented: $showDeleteAllAlert) {
-                Button("取消", role: .cancel) { }
-                Button("删除", role: .destructive) {
-                    deleteAllRecords { success in
-                        if success {
-                            print("✅ 所有数据删除成功")
+        Group {
+            if userId.isEmpty {
+                // 如果没有用户 ID，重定向到登录页面
+                LoginView()
+            } else {
+                // 原有的导航视图内容
+                NavigationView {
+                    ScrollView {
+                        if isLoading {
+                            WeightViewSkeleton()  // 显示骨架屏
+                                .transition(.opacity)
                         } else {
-                            print("❌ 删除数据失败")
-                            showError("删除数据失败")
+                            ScrollViewReader { proxy in
+                                VStack(spacing: 20) {
+                                    // 显示同步状态
+                                    if showSyncResult {
+                                        Text(syncResultMessage)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .padding(.top, 8)
+                                    }
+                                    
+                                    Text(lastSyncTimeString)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    
+                                    // BMI 卡片
+                                    bmiCard
+                                    
+                                    // 喝水卡片
+                                    waterIntakeCard
+                                    
+                                    // 图表切换
+                                    Picker("显示指标", selection: $selectedMetric) {
+                                        ForEach(WeightMetric.allCases, id: \.self) { metric in
+                                            Text(metric.rawValue).tag(metric)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .padding(.horizontal)
+                                    
+                                    // 图表区域
+                                    chartSection
+                                    
+                                    // 目标进度卡片
+                                    goalProgressCard
+                                    
+                                    // 统计分析部分
+                                    analysisSection
+                                        .id("analysis")
+                                    
+                                    // 记录列表
+                                    recordsList
+                                }
+                                .padding()
+                                .onChange(of: scrollToAnalysis) { oldValue, newValue in
+                                    if newValue {
+                                        withAnimation {
+                                            proxy.scrollTo("analysis", anchor: .top)
+                                        }
+                                        // 重置状态
+                                        scrollToAnalysis = false
+                                    }
+                                }
+                            }
+                            .transition(.opacity)
+                        }
+                    }
+                    .animation(.default, value: isLoading)
+                    .refreshable {
+                        await handleRefresh()
+                    }
+                    .navigationTitle("体重记录")
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Menu {
+                                Button(action: { showingAddSheet = true }) {
+                                    Label("添加记录", systemImage: "plus")
+                                }
+                                Button(action: { showingGoalSheet = true }) {
+                                    Label("设置目标", systemImage: "target")
+                                }
+                                Button(action: {
+                                    withAnimation {
+                                        scrollToAnalysis = true
+                                    }
+                                }) {
+                                    Label("数据分析", systemImage: "chart.bar.xaxis")
+                                }
+                                
+                                Divider()
+                                
+                                // 添加测试通知按钮
+                                Button(action: testNotifications) {
+                                    Label("测试喝水通知", systemImage: "drop.circle")
+                                }
+                                Button(action: testWeightNotifications) {
+                                    Label("测试体重通知", systemImage: "scalemass.fill")  // 改用 scalemass.fill 替代 scale.circle
+                                }
+                                
+                                Button(action: generateLocalTestData) {
+                                    Label("生成测试数据", systemImage: "doc.badge.plus")
+                                }
+                                Button(action: clearLocalTestData) {
+                                    Label("清除测试数据", systemImage: "trash")
+                                        .foregroundColor(.red)
+                                }
+                                
+                                Button(action: { showOfflineTestSheet = true }) {
+                                    Label("测试离线功能", systemImage: "network.slash")
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("操作")
+                                    Image(systemName: "ellipsis.circle.fill")
+                                        .font(.title2)
+                                }
+                                .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .sheet(isPresented: $showingAddSheet) {
+                        addWeightSheet
+                    }
+                    .sheet(isPresented: $showingHeightSheet) {
+                        heightInputSheet
+                    }
+                    .sheet(isPresented: $showingGoalSheet) {
+                        goalWeightSheet
+                    }
+                    .sheet(isPresented: $showOfflineTestSheet) {
+                        offlineTestSheet
+                    }
+                    .onAppear {
+                        if shouldReload() {
+                            isLoading = true  // 立即显示骨架屏
+                            lastLoadTime = Date()
+                            
+                            // 先尝试加载缓存
+                            let cachedRecords = loadFromCacheStorage()
+                            if !cachedRecords.isEmpty {
+                                DispatchQueue.main.async {
+                                    self.weightRecords = cachedRecords
+                                    self.isLoading = false
+                                }
+                            }
+                            
+                            // 然后异步加载最新数据
+                            loadUserData()
+                            loadWeightRecords()
+                        }
+                        // 检查并重置饮水量
+                        checkAndResetWaterIntake()
+                        // 加载今日喝水记录
+                        loadTodayWaterIntake()
+                        print("\n📱 检查喝水记录同步状态...")
+                        // 如果距离上次同步超过5分钟，强制同步
+                        if Date().timeIntervalSince(lastWaterSync) > 300 {
+                            print("⚡️ 需要同步喝水记录")
+                            updateWaterIntake()
+                        } else {
+                            print("✓ 喝水记录同步状态正常")
+                        }
+                        
+                        // 请求通知权限并设置提醒
+                        if !waterNotificationsEnabled {
+                            requestNotificationPermission()
+                        } else {
+                            scheduleWaterReminders()
+                        }
+                        
+                        // 添加通知监听
+                        NotificationCenter.default.addObserver(
+                            forName: NSNotification.Name("DrinkWaterAction"),
+                            object: nil,
+                            queue: .main
+                        ) { _ in
+                            if waterIntakeToday < dailyWaterGoal {
+                                waterIntakeToday += 1
+                                updateWaterIntake()
+                            }
+                        }
+                        
+                        // 设置体重记录提醒
+                        scheduleWeightReminders()
+                    }
+                    .onChange(of: userHeight) { oldHeight, newHeight in
+                        print("📊 身高数据更新: \(newHeight)cm")
+                        // 这里可以添加需要随身高变化而更新的UI逻辑
+                    }
+                    .alert("加载失败", isPresented: $showError) {
+                        Button("重试") {
+                            loadWeightRecords()
+                        }
+                        Button("确定", role: .cancel) { }
+                    } message: {
+                        Text(errorMessage)
+                    }
+                    .alert("删除所有数据", isPresented: $showDeleteAllAlert) {
+                        Button("取消", role: .cancel) { }
+                        Button("删除", role: .destructive) {
+                            deleteAllRecords { success in
+                                if success {
+                                    print("✅ 所有数据删除成功")
+                                } else {
+                                    print("❌ 删除数据失败")
+                                    showError("删除数据失败")
+                                }
+                            }
+                        }
+                    } message: {
+                        Text("确定要删除所有记录吗？此操作不可撤销。")
+                    }
+                    .onDisappear {
+                        resetViewState()
+                        waterIntakeManager.cleanup()
+                    }
+                    .overlay(
+                        Group {
+                            if isOffline {
+                                HStack {
+                                    Image(systemName: "wifi.slash")
+                                    Text("离线模式")
+                                }
+                                .font(.caption)
+                                .padding(8)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(20)
+                                .padding()
+                            }
+                        }
+                        .animation(.default, value: isOffline),
+                        alignment: .top
+                    )
+                    .overlay(alignment: .top) {
+                        if showDeleteSuccessToast {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                Text("\(deletedWeightValue, specifier: "%.1f")kg 记录已删除")
+                                    .font(.subheadline)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(Color(.systemBackground))
+                            .cornerRadius(8)
+                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                        
+                        if showDeleteErrorToast {
+                            HStack(spacing: 8) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                                Text("删除失败，请重试")
+                                    .font(.subheadline)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(Color(.systemBackground))
+                            .cornerRadius(8)
+                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
                 }
-            } message: {
-                Text("确定要删除所有记录吗？此操作不可撤销。")
             }
-            .onDisappear {
-                resetViewState()
-            }
-            .overlay(
-                Group {
-                    if isOffline {
-                        HStack {
-                            Image(systemName: "wifi.slash")
-                            Text("离线模式")
-                        }
-                        .font(.caption)
-                        .padding(8)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(20)
-                        .padding()
-                    }
-                }
-                .animation(.default, value: isOffline),
-                alignment: .top
-            )
-            .overlay(alignment: .top) {
-                if showDeleteSuccessToast {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("\(deletedWeightValue, specifier: "%.1f")kg 记录已删除")
-                            .font(.subheadline)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color(.systemBackground))
-                    .cornerRadius(8)
-                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
+        }
+        .onChange(of: userId) { oldValue, newValue in
+            if newValue.isEmpty {
+                print("📱 用户已登出，清理数据...")
+                // 清理数据
+                waterIntakeManager.cleanup()
+                weightRecords = []
+                // 重置其他状态...
                 
-                if showDeleteErrorToast {
-                    HStack(spacing: 8) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.red)
-                        Text("删除失败，请重试")
-                            .font(.subheadline)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color(.systemBackground))
-                    .cornerRadius(8)
-                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
+                // 重定向到登录页面
+                dismiss()
             }
         }
     }
@@ -2717,39 +2745,11 @@ struct WeightView: View {
     // 加载今日喝水记录
     private func loadTodayWaterIntake() {
         print("\n📱 开始加载今日喝水记录...")
-        let db = Firestore.firestore()
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        
-        // 添加实时监听
-        db.collection("users")
-            .document(userId)
-            .collection("waterIntake")
-            .document(today.ISO8601Format())
-            .addSnapshotListener { snapshot, error in  // 使用 addSnapshotListener 替代 getDocument
-                if let error = error {
-                    print("❌ 数据库加载失败: \(error)")
-                    return
-                }
-                
-                if let data = snapshot?.data(),
-                   let cups = data["cups"] as? Int {
-                    print("✅ 从数据库加载成功:")
-                    print("  - 杯数: \(cups)")
-                    
-                    DispatchQueue.main.async {
-                        self.waterIntakeToday = cups
-                        // 保存到本地缓存
-                        let record = WaterIntakeRecord(date: today, cups: cups, lastUpdated: Date())
-                        if let encoded = try? JSONEncoder().encode(record) {
-                            UserDefaults.standard.set(encoded, forKey: "todayWaterIntake")
-                            print("✅ 已更新本地缓存")
-                        }
-                    }
-                } else {
-                    print("ℹ️ 未找到今日记录，使用默认值")
-                }
+        waterIntakeManager.startListening(userId: userId) { cups in
+            DispatchQueue.main.async {
+                self.waterIntakeToday = cups
             }
+        }
     }
     
     // 请求通知权限
@@ -3543,6 +3543,99 @@ extension Array {
             }
         }
         return result
+    }
+}
+
+// 新增一个管理类来处理监听器
+class WaterIntakeManager: ObservableObject {
+    private var waterIntakeListener: ListenerRegistration?
+    
+    func startListening(userId: String, completion: @escaping (Int) -> Void) {
+        print("\n========== 开始监听喝水记录 ==========")
+        print("📱 用户ID: \(userId)")
+        
+        // 先清理现有监听器
+        cleanup()
+        
+        // 确保 userId 不为空
+        guard !userId.isEmpty else {
+            print("❌ 错误: 用户ID为空")
+            print("ℹ️ 跳过监听器设置")
+            completion(0) // 返回默认值
+            return
+        }
+        
+        let db = Firestore.firestore()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let docId = today.ISO8601Format()
+        
+        print("📄 文档路径: users/\(userId)/waterIntake/\(docId)")
+        
+        waterIntakeListener = db.collection("users")
+            .document(userId)
+            .collection("waterIntake")
+            .document(docId)
+            .addSnapshotListener { [weak self] snapshot, error in
+                guard self != nil else {
+                    print("❌ 错误: self 已被释放")
+                    return
+                }
+                
+                if let error = error {
+                    print("❌ 监听失败:")
+                    print("  - 错误类型: \(error.localizedDescription)")
+                    print("  - 错误详情: \(error)")
+                    return
+                }
+                
+                if let data = snapshot?.data() {
+                    print("📥 收到数据更新:")
+                    print("  - 数据: \(data)")
+                    
+                    if let cups = data["cups"] as? Int {
+                        print("✅ 解析成功:")
+                        print("  - 杯数: \(cups)")
+                        
+                        completion(cups)
+                        
+                        // 保存到本地缓存
+                        let record = WaterIntakeRecord(
+                            date: today,
+                            cups: cups,
+                            lastUpdated: Date()
+                        )
+                        if let encoded = try? JSONEncoder().encode(record) {
+                            UserDefaults.standard.set(encoded, forKey: "todayWaterIntake")
+                            print("✅ 已更新本地缓存")
+                        } else {
+                            print("⚠️ 缓存编码失败")
+                        }
+                    } else {
+                        print("⚠️ cups 字段解析失败")
+                        print("  - 原始数据: \(data)")
+                    }
+                } else {
+                    print("ℹ️ 未找到今日记录，使用默认值")
+                    completion(0)
+                }
+            }
+    }
+    
+    func cleanup() {
+        print("\n========== 清理喝水记录监听器 ==========")
+        if waterIntakeListener != nil {
+            waterIntakeListener?.remove()
+            waterIntakeListener = nil
+            print("✅ 监听器已清理")
+        } else {
+            print("ℹ️ 没有活动的监听器需要清理")
+        }
+    }
+    
+    deinit {
+        print("🗑️ WaterIntakeManager 被释放")
+        cleanup()
     }
 }
 
