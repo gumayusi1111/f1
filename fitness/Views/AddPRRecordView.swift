@@ -199,8 +199,6 @@ struct AddPRRecordView: View {
                         HStack {
                             Text("历史记录")
                                 .font(.headline)
-                            Text("(\(records.count))")
-                                .foregroundColor(.secondary)
                             Spacer()
                             if !records.isEmpty {
                                 Button(action: {
@@ -312,16 +310,6 @@ struct AddPRRecordView: View {
                     }
                 }
             )
-            .onChange(of: records) { newValue in
-                DispatchQueue.main.async {
-                    log("""
-                        UI更新状态:
-                        - 记录数量: \(self.records.count)
-                        - 历史记录展开状态: \(self.isHistoryExpanded)
-                        - 最新记录值: \(self.records.first?.value ?? 0)
-                        """)
-                }
-            }
         }
     }
     
@@ -516,11 +504,7 @@ struct AddPRRecordView: View {
             self.records = snapshot?.documents.compactMap { document in
                 log("处理记录: \(document.documentID)")
                 
-                // 直接使用 data() 返回的数据，不需要类型转换
-                guard let data = document.data() else {
-                    log("⚠️ 记录数据为空: \(document.documentID)", type: "WARN")
-                    return nil
-                }
+                let data = document.data()  // 不需要 guard let，因为 data() 返回非可选类型
                 
                 // 详细记录每个字段的解析
                 let id = data["id"] as? String
