@@ -199,6 +199,8 @@ struct AddPRRecordView: View {
                         HStack {
                             Text("历史记录")
                                 .font(.headline)
+                            Text("(\(records.count))")
+                                .foregroundColor(.secondary)
                             Spacer()
                             if !records.isEmpty {
                                 Button(action: {
@@ -272,12 +274,24 @@ struct AddPRRecordView: View {
                 Text(errorMessage)
             }
             .onAppear {
-                // 设置初始值为当前记录值(如果有),否则使用默认值
+                log("\n========== 视图加载 ==========")
+                log("运动项目: \(exercise.name)")
+                log("当前最大记录: \(exercise.maxRecord ?? 0)")
+                
+                // 设置初始值
                 if let currentMax = exercise.maxRecord {
-                    selectedValue = currentMax // 直接使用当前记录值作为初始值
-                } else {
-                    selectedValue = valueRange.first ?? 50.0 // 如果没有记录,使用范围的第一个值
+                    selectedValue = currentMax
+                    selectedIntegerPart = Int(currentMax)
+                    selectedDecimalPart = Int((currentMax.truncatingRemainder(dividingBy: 1)) * 100)
+                    log("""
+                        设置初始值:
+                        - 整数部分: \(selectedIntegerPart)
+                        - 小数部分: \(selectedDecimalPart)
+                        - 完整值: \(selectedValue)
+                        """)
                 }
+                
+                log("开始加载记录...")
                 loadRecords()
             }
             .overlay(
@@ -298,6 +312,16 @@ struct AddPRRecordView: View {
                     }
                 }
             )
+            .onChange(of: records) { newValue in
+                DispatchQueue.main.async {
+                    log("""
+                        UI更新状态:
+                        - 记录数量: \(self.records.count)
+                        - 历史记录展开状态: \(self.isHistoryExpanded)
+                        - 最新记录值: \(self.records.first?.value ?? 0)
+                        """)
+                }
+            }
         }
     }
     
@@ -441,6 +465,7 @@ struct AddPRRecordView: View {
                 showSuccessAnimation = true
                 savedRecord = newRecord
                 records.insert(newRecord, at: 0)
+                onRecordUpdate?()
             }
             
             log("准备关闭页面...")
@@ -460,68 +485,80 @@ struct AddPRRecordView: View {
     
     private func loadRecords() {
         log("\n========== 开始加载记录 ==========")
-        log("项目名称: \(exercise.name)")
-        log("项目ID: \(exercise.id)")
-        log("当前最大记录: \(exercise.maxRecord ?? 0)")
-        log("是否系统预设: \(exercise.isSystemPreset)")
+        log("运动项目: \(exercise.name) (ID: \(exercise.id))")
+        log("当前最大记录: \(exercise.maxRecord ?? 0) \(exercise.unit ?? "")")
         
         let db = Firestore.firestore()
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
             log("❌ 用户ID不存在", type: "ERROR")
             return
         }
+        log("用户ID: \(userId)")
         
-        log("查询路径: users/\(userId)/exercises/\(exercise.id)/records")
-        
-        // 添加数据库验证
-        db.collection("users")
-            .document(userId)
-            .collection("exercises")
-            .document(exercise.id)
-            .getDocument { (doc, error) in
-                if let error = error {
-                    log("❌ 验证项目失败: \(error.localizedDescription)", type: "ERROR")
-                } else if let data = doc?.data() {
-                    log("""
-                        ✅ 当前项目数据:
-                        - 名称: \(data["name"] ?? "未知")
-                        - 最大记录: \(data["maxRecord"] ?? "未知")
-                        - 最后记录时间: \(data["lastRecordDate"] ?? "未知")
-                        - 是否系统预设: \(data["isSystemPreset"] ?? "未知")
-                        """)
-                } else {
-                    log("⚠️ 项目文档不存在", type: "WARN")
-                }
-            }
-        
-        // 继续加载记录...
-        db.collection("users")
+        let recordsRef = db.collection("users")
             .document(userId)
             .collection("exercises")
             .document(exercise.id)
             .collection("records")
             .order(by: "date", descending: true)
-            .getDocuments { snapshot, error in
-                if let error = error {
-                    log("❌ 加载记录失败: \(error.localizedDescription)", type: "ERROR")
-                    return
+        
+        log("📝 开始查询记录: users/\(userId)/exercises/\(exercise.id)/records")
+        
+        recordsRef.getDocuments { snapshot, error in
+            if let error = error {
+                log("❌ 加载记录失败: \(error.localizedDescription)", type: "ERROR")
+                return
+            }
+            
+            log("📊 查询结果: 找到 \(snapshot?.documents.count ?? 0) 条记录")
+            
+            // 转换记录
+            self.records = snapshot?.documents.compactMap { document in
+                log("处理记录: \(document.documentID)")
+                
+                // 直接使用 data() 返回的数据，不需要类型转换
+                guard let data = document.data() else {
+                    log("⚠️ 记录数据为空: \(document.documentID)", type: "WARN")
+                    return nil
                 }
                 
-                if let documents = snapshot?.documents {
-                    log("📊 找到 \(documents.count) 条记录")
-                    documents.forEach { doc in
-                        log("""
-                            记录详情:
-                            - ID: \(doc.documentID)
-                            - 数值: \(doc.data()["value"] ?? "未知")
-                            - 日期: \(doc.data()["date"] ?? "未知")
-                            - 是否PR: \(doc.data()["isPR"] ?? "未知")
-                            """)
-                    }
-                } else {
-                    log("⚠️ 没有找到记录", type: "WARN")
+                // 详细记录每个字段的解析
+                let id = data["id"] as? String
+                let value = data["value"] as? Double
+                let timestamp = data["date"] as? Timestamp
+                let isPR = data["isPR"] as? Bool
+                
+                log("""
+                    记录详情:
+                    - ID: \(id ?? "nil")
+                    - 值: \(value ?? 0)
+                    - 时间戳: \(timestamp?.dateValue().description ?? "nil")
+                    - 是否PR: \(isPR ?? false)
+                    """)
+                
+                guard let id = id,
+                      let value = value,
+                      let date = timestamp?.dateValue(),
+                      let isPR = isPR else {
+                    log("❌ 记录数据格式错误: \(document.documentID)", type: "ERROR")
+                    return nil
                 }
+                
+                return ExerciseRecord(id: id, value: value, date: date, isPR: isPR)
+            } ?? []
+            
+            log("✅ 成功加载并转换 \(self.records.count) 条记录")
+            
+            // 验证记录排序
+            if !self.records.isEmpty {
+                log("""
+                    最新记录:
+                    - 时间: \(self.records[0].date)
+                    - 值: \(self.records[0].value)
+                    - 是否PR: \(self.records[0].isPR)
+                    """)
             }
+        }
     }
     
     private func deleteRecord(_ record: ExerciseRecord) {
