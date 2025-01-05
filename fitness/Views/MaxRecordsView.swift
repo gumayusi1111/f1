@@ -406,6 +406,11 @@ struct MaxRecordsView: View {
                             if !filteredPRs.isEmpty {  // 修改这里，只要有数据就显示分页
                                 HStack(spacing: 20) {
                                     Button(action: {
+                                        // 添加触觉反馈
+                                        let generator = UIImpactFeedbackGenerator(style: .light)
+                                        generator.prepare()
+                                        generator.impactOccurred()
+                                        
                                         withAnimation {
                                             currentPage = max(1, currentPage - 1)
                                         }
@@ -420,6 +425,11 @@ struct MaxRecordsView: View {
                                         .foregroundColor(.secondary)
                                     
                                     Button(action: {
+                                        // 添加触觉反馈
+                                        let generator = UIImpactFeedbackGenerator(style: .light)
+                                        generator.prepare()
+                                        generator.impactOccurred()
+                                        
                                         withAnimation {
                                             currentPage = min(totalPages, currentPage + 1)
                                         }
@@ -1182,7 +1192,17 @@ struct ProjectManagementSheet: View {
                     isCustomExpanded = false
                     dismiss()
                 },
-                trailing: Button(action: { showingAddSheet = true }) {
+                trailing: Button(action: { 
+                    // 添加触觉反馈
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.prepare()
+                    generator.impactOccurred()
+                    
+                    // 播放系统音效
+                    AudioServicesPlaySystemSound(1104)
+                    
+                    showingAddSheet = true 
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
                         Text("添加项目")
