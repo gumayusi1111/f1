@@ -503,7 +503,7 @@ struct AddPRRecordView: View {
                     log("最大记录更新成功: \(newMax.value)")
                     // 重新加载历史最佳
                     exerciseRef.getDocument { (document, _) in
-                        if let data = document?.data() {
+                        if document != nil {
                             DispatchQueue.main.async {
                                 onRecordUpdate?()
                             }

@@ -105,6 +105,9 @@ struct MaxRecordsView: View {
     // 在 MaxRecordsView 中添加状态来追踪 sheet 的显示
     @State private var isSheetPresented = false
     
+    // 添加一个新的 State 属性来控制 ScrollView
+    @State private var scrollProxy: ScrollViewProxy?
+    
     init() {
         // 确保只在首次加载时初始化
         if UserDefaults.standard.bool(forKey: "firestoreInitialized") == false {
@@ -219,6 +222,8 @@ struct MaxRecordsView: View {
         
         if !canRefresh() {
             showRefreshLimitAlert = true
+            // 添加这一行来确保刷新状态重置
+            isRefreshing = false
             return
         }
         
@@ -246,7 +251,7 @@ struct MaxRecordsView: View {
             
             // 更新刷新时间
             updateLastRefreshTime()
-            lastSyncDate = Date() // 更新最后同步日期
+            lastSyncDate = Date()
             updateLastSyncTime()
             
             print("✅ 数据刷新成功")
@@ -256,210 +261,231 @@ struct MaxRecordsView: View {
             print("❌ 刷新失败: \(error.localizedDescription)")
         }
         
-        isRefreshing = false
+        // 确保在所有情况下都会重置刷新状态
+        DispatchQueue.main.async {
+            isRefreshing = false
+        }
+        
         print("========== 刷新结束 ==========\n")
     }
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 0) {
-                    // 同步状态指示器
-                    HStack {
-                        Text(lastSyncTimeString == "未同步" ? "下拉刷新" : "上次同步：\(lastSyncTimeString)")
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // 添加一个带 id 的空 View 作为滚动目标
+                        Color.clear
+                            .frame(height: 0)
+                            .id("top")
                         
-                        if isRefreshing {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
-                    .padding(.top, 10)
-                    
-                    // 主要内容
-                    VStack(spacing: 20) {
-                        // 项目管理入口
-                        Button(action: { showingProjectSheet = true }) {
-                            // 整个卡片容器
-                            HStack(spacing: 15) {
-                                // 左侧图标
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.blue.opacity(0.1))
-                                        .frame(width: 40, height: 40)
-                                    Image(systemName: "dumbbell.fill")
-                                        .foregroundColor(.blue)
-                                }
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("项目管理")
-                                        .font(.headline)
-                                    Text("管理训练项目和动作")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                                
-                                Image(systemName: "chevron.right")
-                                    .foregroundColor(.gray)
-                                    .font(.system(size: 14, weight: .semibold))
+                        // 同步状态指示器
+                        HStack {
+                            Text(lastSyncTimeString == "未同步" ? "下拉刷新" : "上次同步：\(lastSyncTimeString)")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                            
+                            if isRefreshing {
+                                ProgressView()
+                                    .scaleEffect(0.8)
                             }
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
-                            )
                         }
-                        .padding(.horizontal)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .padding(.top, 10)
                         
-                        // PR 搜索栏
-                        SearchBar(text: $prSearchText)
+                        // 主要内容
+                        VStack(spacing: 20) {
+                            // 项目管理入口
+                            Button(action: { showingProjectSheet = true }) {
+                                // 整个卡片容器
+                                HStack(spacing: 15) {
+                                    // 左侧图标
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color.blue.opacity(0.1))
+                                            .frame(width: 40, height: 40)
+                                        Image(systemName: "dumbbell.fill")
+                                            .foregroundColor(.blue)
+                                    }
+                                    
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("项目管理")
+                                            .font(.headline)
+                                        Text("管理训练项目和动作")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: "chevron.right")
+                                        .foregroundColor(.gray)
+                                        .font(.system(size: 14, weight: .semibold))
+                                }
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color(.systemBackground))
+                                        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+                                )
+                            }
                             .padding(.horizontal)
-                        
-                        // PR 类别选择
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            VStack(spacing: 0) {
-                                HStack(spacing: 12) {
-                                    ForEach(categories, id: \.self) { category in
-                                        let count = category == "全部" ? 
-                                            (prSearchText.isEmpty ? recentPRs.count : filteredPRs.count) :
-                                            recentPRs.filter { exercise in
-                                                let matchesCategory = exercise.category == category
-                                                let matchesSearch = prSearchText.isEmpty || 
-                                                    exercise.name.localizedCaseInsensitiveContains(prSearchText)
-                                                return matchesCategory && matchesSearch
-                                            }.count
-                                        
-                                        Button(action: { 
+                            
+                            // PR 搜索栏
+                            SearchBar(text: $prSearchText)
+                                .padding(.horizontal)
+                            
+                            // PR 类别选择
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                VStack(spacing: 0) {
+                                    HStack(spacing: 12) {
+                                        ForEach(categories, id: \.self) { category in
+                                            let count = category == "全部" ? 
+                                                (prSearchText.isEmpty ? recentPRs.count : filteredPRs.count) :
+                                                recentPRs.filter { exercise in
+                                                    let matchesCategory = exercise.category == category
+                                                    let matchesSearch = prSearchText.isEmpty || 
+                                                        exercise.name.localizedCaseInsensitiveContains(prSearchText)
+                                                    return matchesCategory && matchesSearch
+                                                }.count
+                                            
+                                            Button(action: { 
+                                                // 添加触觉反馈
+                                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                                generator.prepare()
+                                                generator.impactOccurred()
+                                                
+                                                // 播放系统音效
+                                                AudioServicesPlaySystemSound(1104)
+                                                
+                                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                                    selectedPRCategory = category
+                                                }
+                                            }) {
+                                                VStack(spacing: 8) {
+                                                    HStack(spacing: 4) {
+                                                        Text(category)
+                                                        Text("\(count)")
+                                                            .font(.system(size: 12))
+                                                            .padding(.horizontal, 6)
+                                                            .padding(.vertical, 2)
+                                                            .background(
+                                                                Capsule()
+                                                                    .fill(selectedPRCategory == category ? 
+                                                                        Color.white.opacity(0.2) : 
+                                                                        getCategoryColor(category).opacity(0.1))
+                                                            )
+                                                    }
+                                                    .font(.system(size: 14))
+                                                    .fontWeight(selectedPRCategory == category ? .semibold : .regular)
+                                                    .foregroundColor(selectedPRCategory == category ? .white : .primary)
+                                                    .padding(.horizontal, 12)
+                                                    .padding(.vertical, 8)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 8)
+                                                            .fill(selectedPRCategory == category ? 
+                                                                getCategoryColor(category) : Color(.systemGray6))
+                                                    )
+                                                    
+                                                    // 添加下划线
+                                                    Rectangle()
+                                                        .fill(getCategoryColor(category))
+                                                        .frame(height: 2)
+                                                        .opacity(selectedPRCategory == category ? 1 : 0)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                }
+                            }
+                            
+                            // PR 记录展示
+                            VStack(spacing: 16) {
+                                if isFirstLoading {
+                                    // 骨架屏
+                                    LazyVGrid(columns: prColumns, spacing: 16) {
+                                        ForEach(0..<6, id: \.self) { _ in
+                                            PRRecordCardSkeleton()
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                } else {
+                                    LazyVGrid(columns: prColumns, spacing: 16) {
+                                        ForEach(currentPageItems) { exercise in
+                                            PRRecordCard(
+                                                exercise: exercise,
+                                                maxRecord: exercise.maxRecord,
+                                                lastRecordDate: exercise.lastRecordDate
+                                            )
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                }
+                                
+                                // 分页控制
+                                if !filteredPRs.isEmpty {  // 修改这里，只要有数据就显示分页
+                                    HStack(spacing: 20) {
+                                        Button(action: {
                                             // 添加触觉反馈
                                             let generator = UIImpactFeedbackGenerator(style: .light)
                                             generator.prepare()
                                             generator.impactOccurred()
                                             
-                                            // 播放系统音效
-                                            AudioServicesPlaySystemSound(1104)
-                                            
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                                selectedPRCategory = category
+                                            withAnimation {
+                                                currentPage = max(1, currentPage - 1)
                                             }
                                         }) {
-                                            VStack(spacing: 8) {
-                                                HStack(spacing: 4) {
-                                                    Text(category)
-                                                    Text("\(count)")
-                                                        .font(.system(size: 12))
-                                                        .padding(.horizontal, 6)
-                                                        .padding(.vertical, 2)
-                                                        .background(
-                                                            Capsule()
-                                                                .fill(selectedPRCategory == category ? 
-                                                                    Color.white.opacity(0.2) : 
-                                                                    getCategoryColor(category).opacity(0.1))
-                                                        )
-                                                }
-                                                .font(.system(size: 14))
-                                                .fontWeight(selectedPRCategory == category ? .semibold : .regular)
-                                                .foregroundColor(selectedPRCategory == category ? .white : .primary)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 8)
-                                                .background(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .fill(selectedPRCategory == category ? 
-                                                            getCategoryColor(category) : Color(.systemGray6))
-                                                )
-                                                
-                                                // 添加下划线
-                                                Rectangle()
-                                                    .fill(getCategoryColor(category))
-                                                    .frame(height: 2)
-                                                    .opacity(selectedPRCategory == category ? 1 : 0)
+                                            Image(systemName: "chevron.left")
+                                                .foregroundColor(currentPage > 1 ? .blue : .gray)
+                                        }
+                                        .disabled(currentPage <= 1)
+                                        
+                                        Text("\(currentPage) / \(totalPages)")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(.secondary)
+                                        
+                                        Button(action: {
+                                            // 添加触觉反馈
+                                            let generator = UIImpactFeedbackGenerator(style: .light)
+                                            generator.prepare()
+                                            generator.impactOccurred()
+                                            
+                                            withAnimation {
+                                                currentPage = min(totalPages, currentPage + 1)
                                             }
+                                        }) {
+                                            Image(systemName: "chevron.right")
+                                                .foregroundColor(currentPage < totalPages ? .blue : .gray)
                                         }
+                                        .disabled(currentPage >= totalPages)
                                     }
+                                    .padding(.bottom)
                                 }
-                                .padding(.horizontal)
-                            }
-                        }
-                        
-                        // PR 记录展示
-                        VStack(spacing: 16) {
-                            if isFirstLoading {
-                                // 骨架屏
-                                LazyVGrid(columns: prColumns, spacing: 16) {
-                                    ForEach(0..<6, id: \.self) { _ in
-                                        PRRecordCardSkeleton()
-                                    }
-                                }
-                                .padding(.horizontal)
-                            } else {
-                                LazyVGrid(columns: prColumns, spacing: 16) {
-                                    ForEach(currentPageItems) { exercise in
-                                        PRRecordCard(
-                                            exercise: exercise,
-                                            maxRecord: exercise.maxRecord,
-                                            lastRecordDate: exercise.lastRecordDate
-                                        )
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                            
-                            // 分页控制
-                            if !filteredPRs.isEmpty {  // 修改这里，只要有数据就显示分页
-                                HStack(spacing: 20) {
-                                    Button(action: {
-                                        // 添加触觉反馈
-                                        let generator = UIImpactFeedbackGenerator(style: .light)
-                                        generator.prepare()
-                                        generator.impactOccurred()
-                                        
-                                        withAnimation {
-                                            currentPage = max(1, currentPage - 1)
-                                        }
-                                    }) {
-                                        Image(systemName: "chevron.left")
-                                            .foregroundColor(currentPage > 1 ? .blue : .gray)
-                                    }
-                                    .disabled(currentPage <= 1)
-                                    
-                                    Text("\(currentPage) / \(totalPages)")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.secondary)
-                                    
-                                    Button(action: {
-                                        // 添加触觉反馈
-                                        let generator = UIImpactFeedbackGenerator(style: .light)
-                                        generator.prepare()
-                                        generator.impactOccurred()
-                                        
-                                        withAnimation {
-                                            currentPage = min(totalPages, currentPage + 1)
-                                        }
-                                    }) {
-                                        Image(systemName: "chevron.right")
-                                            .foregroundColor(currentPage < totalPages ? .blue : .gray)
-                                    }
-                                    .disabled(currentPage >= totalPages)
-                                }
-                                .padding(.bottom)
                             }
                         }
                     }
+                    // 将 onAppear 移到这里
+                    .onAppear {
+                        scrollProxy = proxy
+                    }
                 }
-            }
-            .refreshable {
-                await performRefresh()
-            }
-            .alert("刷新限制", isPresented: $showRefreshLimitAlert) {
-                Button("知道了", role: .cancel) { }
-            } message: {
-                Text("请等待一分钟后再次刷新")
+                .refreshable {
+                    await performRefresh()
+                }
+                .alert("刷新限制", isPresented: $showRefreshLimitAlert) {
+                    Button("知道了", role: .cancel) {
+                        // 在弹窗关闭时强制滚动到顶部
+                        withAnimation(.spring()) {
+                            scrollProxy?.scrollTo("top", anchor: .top)
+                            isRefreshing = false
+                        }
+                    }
+                } message: {
+                    Text("请等待一分钟后再次刷新")
+                }
             }
             .overlay(
                 VStack {
