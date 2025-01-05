@@ -167,7 +167,7 @@ struct AddPRRecordView: View {
                                 // 小数部分选择器
                                 Picker("小数", selection: $selectedDecimalPart) {
                                     ForEach(decimalParts, id: \.self) { value in
-                                        Text(exercise.unit == "分钟" ? "\(value)秒" : "\(value)")
+                                        Text(getDecimalText(value: value))
                                             .tag(value)
                                     }
                                 }
@@ -351,9 +351,8 @@ struct AddPRRecordView: View {
         log("开始保存记录...")
         log("运动项目: \(exercise.name)")
         log("当前最大记录: \(exercise.maxRecord ?? 0)")
-        log("新记录值: \(selectedValue)")
-        log("项目ID: \(exercise.id)")
-        log("是否系统预设: \(exercise.isSystemPreset)")
+        log("选择的整数部分: \(selectedIntegerPart)")
+        log("选择的小数部分: \(selectedDecimalPart)")
         
         guard !isLoading else {
             log("正在保存中,忽略重复请求", type: "WARN")
@@ -369,11 +368,27 @@ struct AddPRRecordView: View {
             isLoading = false
             return
         }
-        log("用户ID: \(userId)")
         
-        let now = Date()
-        guard selectedValue > 0 else {
-            log("无效的数值: \(selectedValue)", type: "ERROR")
+        // 计算最终值
+        let finalValue = if exercise.unit == "kg" || exercise.unit == "lbs" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0
+        } else if exercise.unit == "秒" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0
+        } else if exercise.unit == "分钟" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 60.0
+        } else if exercise.unit == "m" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0
+        } else if exercise.unit == "km" || exercise.unit == "mile" {
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0
+        } else {
+            selectedValue
+        }
+        
+        log("计算得到的最终值: \(finalValue)")
+        
+        // 验证最终值
+        guard finalValue > 0 else {
+            log("无效的最终值: \(finalValue)", type: "ERROR")
             showError = true
             errorMessage = "请输入有效的数值"
             isLoading = false
@@ -386,26 +401,11 @@ struct AddPRRecordView: View {
         log("- 类别: \(exercise.category)")
         log("- 当前最大记录: \(exercise.maxRecord ?? 0)")
         
-        // 计算最终值
-        let finalValue = if exercise.unit == "kg" || exercise.unit == "lbs" {
-            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0
-        } else if exercise.unit == "秒" {
-            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0
-        } else if exercise.unit == "分钟" {
-            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 60.0
-        } else if exercise.unit == "m" {
-            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0  // 0.5米 = 0.5
-        } else if exercise.unit == "km" || exercise.unit == "mile" {
-            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0  // 和重量单位一样的处理方式
-        } else {
-            selectedValue
-        }
-        
         // 创建记录
         let newRecord = ExerciseRecord(
             id: UUID().uuidString,
             value: finalValue,
-            date: now,
+            date: Date(),
             isPR: exercise.maxRecord == nil || finalValue > exercise.maxRecord!
         )
         
@@ -418,7 +418,7 @@ struct AddPRRecordView: View {
         let recordData: [String: Any] = [
             "id": newRecord.id,
             "value": Double(finalValue),
-            "date": Timestamp(date: now),
+            "date": Timestamp(date: Date()),
             "isPR": newRecord.isPR
         ]
         
@@ -462,7 +462,7 @@ struct AddPRRecordView: View {
                     .document(exercise.id)
                     .updateData([
                         "maxRecord": Double(finalValue),
-                        "lastRecordDate": Timestamp(date: now)
+                        "lastRecordDate": Timestamp(date: Date())
                     ]) { error in
                         if let error = error {
                             log("更新最大记录失败: \(error.localizedDescription)", type: "ERROR")
@@ -718,6 +718,19 @@ struct AddPRRecordView: View {
     
     private func playSuccessSound() {
         AudioServicesPlaySystemSound(1004) // 使用更短的系统音效
+    }
+    
+    private func getDecimalText(value: Int) -> String {
+        if exercise.unit == "分钟" {
+            return "\(value)秒"
+        } else if exercise.unit == "kg" || exercise.unit == "lbs" || 
+                  exercise.unit == "km" || exercise.unit == "mile" {
+            // 对于使用 25/50/75 格式的单位，0 显示为 "00"
+            return value == 0 ? "00" : "\(value)"
+        } else {
+            // 对于其他单位（秒、米等），保持原样显示
+            return "\(value)"
+        }
     }
 }
 
