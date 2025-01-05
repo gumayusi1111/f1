@@ -23,10 +23,10 @@ struct AddPRRecordView: View {
     
     // 修改滚轮选择器的范围计算
     private var valueRange: [Double] {
-        if exercise.unit == "组" || exercise.unit == "次" {
-            // 如果是组或次为单位,返回整数部分和小数部分的组合
+        // 如果当前项目有历史记录，使用80%-120%的范围
+        if let currentMax = exercise.maxRecord {
             var values: [Double] = []
-            let baseValue = Int(exercise.maxRecord ?? 10)
+            let baseValue = Int(currentMax)
             let minValue = max(1, Int(Double(baseValue) * 0.8))
             let maxValue = Int(Double(baseValue) * 1.2)
             
@@ -37,31 +37,60 @@ struct AddPRRecordView: View {
             }
             return values
         } else {
-            // 其他单位保持原有逻辑
+            // 如果当前项目没有记录，使用默认范围
             var values: [Double] = []
-            let baseValue = exercise.maxRecord ?? 50.0
-            let minValue = max(0, baseValue * 0.8)
-            let maxValue = baseValue * 1.2
-            var current = minValue
-            while current <= maxValue {
-                values.append(current)
-                current += 0.5
-            }
-            if let currentMax = exercise.maxRecord,
-               !values.contains(currentMax) {
-                values.append(currentMax)
-                values.sort()
+            switch exercise.unit {
+            case "次", "组":
+                // 0-30的范围，每个整数都有.0和.5两个选项
+                for i in 0...30 {
+                    values.append(Double(i))
+                    values.append(Double(i) + 0.5)
+                }
+            case "秒":
+                // 0-60的范围
+                for i in 0...60 {
+                    values.append(Double(i))
+                    values.append(Double(i) + 0.5)
+                }
+            // ... 其他单位的默认范围
+            default:
+                // 默认范围
+                for i in 0...50 {
+                    values.append(Double(i))
+                    values.append(Double(i) + 0.5)
+                }
             }
             return values
         }
     }
 
-    // 添加整数和小数部分的范围计算
+    // 修改整数范围计算
     private var integerRange: [Int] {
-        let baseValue = Int(exercise.maxRecord ?? 50)
-        let minValue = max(1, Int(Double(baseValue) * 0.8))
-        let maxValue = Int(Double(baseValue) * 1.2)
-        return Array(minValue...maxValue)
+        // 如果当前项目有历史记录，使用80%-120%的范围
+        if let currentMax = exercise.maxRecord {
+            let baseValue = Int(currentMax)
+            let minValue = max(1, Int(Double(baseValue) * 0.8))
+            let maxValue = Int(Double(baseValue) * 1.2)
+            return Array(minValue...maxValue)
+        } else {
+            // 如果当前项目没有记录，使用默认范围
+            switch exercise.unit {
+            case "次", "组":
+                return Array(0...30)  // 0-30次/组
+            case "秒":
+                return Array(0...60)  // 0-60秒
+            case "分钟":
+                return Array(0...30)  // 0-30分钟
+            case "kg", "lbs":
+                return Array(0...100) // 0-100kg/lbs
+            case "km", "mile":
+                return Array(0...20)  // 0-20km/mile
+            case "m":
+                return Array(0...100) // 0-100m
+            default:
+                return Array(0...50)  // 默认范围
+            }
+        }
     }
 
     // 修改小数部分选项
