@@ -161,6 +161,7 @@ struct AddTrainingView: View {
                 
                 // 训练详情输入区域
                 if let exercise = selectedExercise {
+                    Spacer()
                     TrainingDetailSection(
                         exercise: exercise,
                         sets: $sets,
@@ -168,6 +169,7 @@ struct AddTrainingView: View {
                         weight: $weight,
                         notes: $notes
                     )
+                    .transition(.move(edge: .bottom))
                 }
                 
                 // 完成按钮
@@ -550,55 +552,138 @@ struct TrainingDetailSection: View {
     @Binding var notes: String
     
     var body: some View {
-        VStack(spacing: 16) {
-            // 组数和次数选择器
-            HStack(spacing: 20) {
-                // 组数选择
-                VStack {
-                    Text("组数")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    Picker("", selection: $sets) {
-                        ForEach(1...10, id: \.self) { num in
-                            Text("\(num)").tag(num)
-                        }
-                    }
-                    .pickerStyle(.wheel)
-                    .frame(width: 60, height: 100)
-                }
+        VStack(spacing: 20) {
+            // 顶部把手示意
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color(.systemGray4))
+                .frame(width: 40, height: 5)
+                .padding(.top, 8)
+            
+            // 标题
+            Text(exercise.name)
+                .font(.headline)
+                .padding(.bottom, 5)
+            
+            // 主要输入区域
+            HStack(spacing: 25) {
+                // 组数选择器
+                NumberPickerColumn(
+                    title: "组数",
+                    value: $sets,
+                    range: 1...10,
+                    tint: .blue
+                )
                 
-                // 次数选择
-                VStack {
-                    Text("次数")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    Picker("", selection: $reps) {
-                        ForEach(1...30, id: \.self) { num in
-                            Text("\(num)").tag(num)
-                        }
-                    }
-                    .pickerStyle(.wheel)
-                    .frame(width: 60, height: 100)
-                }
+                // 分隔线
+                Rectangle()
+                    .fill(Color(.systemGray5))
+                    .frame(width: 1, height: 80)
+                
+                // 次数选择器
+                NumberPickerColumn(
+                    title: "次数",
+                    value: $reps,
+                    range: 1...30,
+                    tint: .blue
+                )
+                
+                // 分隔线
+                Rectangle()
+                    .fill(Color(.systemGray5))
+                    .frame(width: 1, height: 80)
                 
                 // 重量输入
-                VStack {
-                    Text("重量(kg)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    TextField("0", text: $weight)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.center)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .frame(width: 80)
-                }
+                WeightInputColumn(weight: $weight)
             }
+            .padding(.vertical, 10)
             
             // 备注输入
-            TextField("备注(选填)", text: $notes)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
+            VStack(alignment: .leading, spacing: 8) {
+                Text("备注")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField("添加备注", text: $notes)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .font(.system(size: 15))
+            }
+            .padding(.horizontal)
         }
         .padding()
         .background(Color(.systemBackground))
+        .cornerRadius(20, corners: [.topLeft, .topRight])
+        .shadow(color: .black.opacity(0.05), radius: 5, y: -2)
+    }
+}
+
+// 添加数字选择器列组件
+struct NumberPickerColumn: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let tint: Color
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            Picker("", selection: $value) {
+                ForEach(range, id: \.self) { num in
+                    Text("\(num)")
+                        .tag(num)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 100)
+            .clipped()
+        }
+    }
+}
+
+// 添加重量输入列组件
+struct WeightInputColumn: View {
+    @Binding var weight: String
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("重量")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            HStack(alignment: .center, spacing: 4) {
+                TextField("0", text: $weight)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 60)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                
+                Text("kg")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .frame(height: 100, alignment: .center)
+        }
+    }
+}
+
+// 添加圆角扩展
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+    
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(path.cgPath)
     }
 }
