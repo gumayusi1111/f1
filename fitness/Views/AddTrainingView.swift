@@ -704,26 +704,37 @@ struct TrainingDetailSection: View {
     // 添加小数部分选项
     private var decimalParts: [Int] {
         switch exercise.unit {
+        case "次", "组":
+            // 只保留 0，移除 0.5 选项
+            return [0]
         case "秒":
+            // 秒数是 0-9
             return Array(0...9)
         case "分钟":
+            // 分钟的小数是 0-59 秒
             return Array(0...59)
-        case "m":
-            return [0, 5]
-        case "km", "mile":
+        case "m", "km", "mile", "kg", "lbs":
+            // 距离和重量单位使用 .00, .25, .50, .75
             return [0, 25, 50, 75]
-        default: // kg, lbs 等重量单位
-            return [0, 25, 50, 75]
+        default:
+            return [0]
         }
     }
     
     // 格式化小数文本
     private func getDecimalText(value: Int) -> String {
         switch exercise.unit {
+        case "次", "组":
+            // 只显示 .0
+            return "0"
+        case "秒":
+            return "\(value)"
         case "分钟":
             return "\(value)秒"
+        case "m", "km", "mile", "kg", "lbs":
+            return value == 0 ? "00" : String(format: "%02d", value)
         default:
-            return String(format: "%02d", value)
+            return "0"
         }
     }
     
@@ -776,12 +787,14 @@ struct TrainingDetailSection: View {
                 Divider()
                     .frame(height: 80)
                 
-                // 数值输入
+                // 数值输入 - 添加 sets 和 reps 绑定
                 WeightInputColumn(
                     value: $weight,
                     exercise: exercise,
                     integerPart: $selectedIntegerPart,
-                    decimalPart: $selectedDecimalPart
+                    decimalPart: $selectedDecimalPart,
+                    sets: $sets,      // 添加组数绑定
+                    reps: $reps       // 添加次数绑定
                 )
             }
             .padding(.vertical, 10)
@@ -880,6 +893,8 @@ struct WeightInputColumn: View {
     let exercise: Exercise
     @Binding var integerPart: Int
     @Binding var decimalPart: Int
+    @Binding var sets: Int       // 添加组数绑定
+    @Binding var reps: Int       // 添加次数绑定
     
     @State private var isInitialized = false
     @State private var isLoading = true
@@ -1010,23 +1025,16 @@ struct WeightInputColumn: View {
         print("  - 整数部分: \(integerPart)")
         print("  - 小数部分: \(decimalPart)")
         
-        let finalValue = switch exercise.unit {
-        case "次", "组":
-            Double(integerPart) + (decimalPart == 5 ? 0.5 : 0.0)
-        case "秒":
-            Double(integerPart) + Double(decimalPart) / 10.0
-        case "分钟":
-            Double(integerPart) + Double(decimalPart) / 60.0
-        default:
-            Double(integerPart) + Double(decimalPart) / 100.0
+        // 如果是次数或组数，同步更新对应的值
+        if exercise.unit == "次" {
+            reps = integerPart
+        } else if exercise.unit == "组" {
+            sets = integerPart
         }
         
-        value = switch exercise.unit {
-        case "次", "组", "秒":
-            String(format: "%.1f", finalValue)
-        default:
-            String(format: "%.2f", finalValue)
-        }
+        let finalValue = Double(integerPart)  // 次和组只使用整数部分
+        
+        value = String(format: "%.0f", finalValue)
         
         print("  - 最终值: \(value)")
     }
@@ -1035,8 +1043,8 @@ struct WeightInputColumn: View {
     private var decimalParts: [Int] {
         switch exercise.unit {
         case "次", "组":
-            // 次数和组数只有 .0 和 .5
-            return [0, 5]
+            // 只保留 0，移除 0.5 选项
+            return [0]
         case "秒":
             // 秒数是 0-9
             return Array(0...9)
@@ -1054,16 +1062,13 @@ struct WeightInputColumn: View {
     private func getDecimalText(value: Int) -> String {
         switch exercise.unit {
         case "次", "组":
-            // 次数和组数显示一位小数 (x.0 或 x.5)
-            return value == 0 ? "0" : "5"
+            // 只显示 .0
+            return "0"
         case "秒":
-            // 秒数显示一位小数 (x.0-x.9)
             return "\(value)"
         case "分钟":
-            // 分钟显示秒数 (x分y秒)
             return "\(value)秒"
         case "m", "km", "mile", "kg", "lbs":
-            // 距离和重量显示两位小数 (xx.00, xx.25, xx.50, xx.75)
             return value == 0 ? "00" : String(format: "%02d", value)
         default:
             return "0"
