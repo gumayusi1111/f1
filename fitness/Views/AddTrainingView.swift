@@ -1,0 +1,438 @@
+import SwiftUI
+import FirebaseFirestore
+
+struct AddTrainingView: View {
+    let date: Date
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("userId") private var userId: String = ""
+    
+    @State private var selectedBodyPart = "胸部"
+    @State private var selectedExercise: Exercise? = nil
+    @State private var duration = ""
+    @State private var sets = 3  // 组数
+    @State private var reps = 12 // 次数
+    @State private var weight = "" // 重量
+    @State private var notes = ""
+    @State private var searchText = ""
+    @State private var isLoading = false
+    @State private var showError = false
+    @State private var errorMessage = ""
+    @State private var exercises: [Exercise] = []
+    @State private var todayRecords: [TrainingRecord] = [] // 今日记录
+    
+    let bodyParts = ["胸部", "背部", "腿部", "肩部", "手臂", "核心"]
+    var onTrainingAdded: () -> Void
+    
+    private var filteredExercises: [Exercise] {
+        exercises.filter { exercise in
+            (searchText.isEmpty || exercise.name.localizedCaseInsensitiveContains(searchText)) &&
+            exercise.category == selectedBodyPart
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                // 训练部位选择器
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(bodyParts, id: \.self) { part in
+                            BodyPartButton(
+                                part: part,
+                                isSelected: selectedBodyPart == part,
+                                action: { withAnimation { selectedBodyPart = part } }
+                            )
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                }
+                .background(Color(.systemBackground))
+                
+                // 今日训练记录
+                if !todayRecords.isEmpty {
+                    TodayTrainingSection(records: todayRecords)
+                }
+                
+                // 搜索栏
+                TrainingSearchBar(text: $searchText)
+                    .padding()
+                
+                // 训练项目列表
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(filteredExercises) { exercise in
+                            ExerciseCard(
+                                exercise: exercise,
+                                isSelected: selectedExercise?.id == exercise.id,
+                                onSelect: {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        selectedExercise = exercise
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    .padding()
+                }
+                
+                // 训练详情输入区域
+                if let exercise = selectedExercise {
+                    TrainingDetailSection(
+                        exercise: exercise,
+                        sets: $sets,
+                        reps: $reps,
+                        weight: $weight,
+                        notes: $notes
+                    )
+                }
+                
+                // 完成按钮
+                Button(action: addTraining) {
+                    if isLoading {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text("完成").fontWeight(.semibold)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .background(
+                    selectedExercise == nil || weight.isEmpty ? 
+                        Color.gray.opacity(0.3) : Color.blue
+                )
+                .foregroundColor(.white)
+                .cornerRadius(12)
+                .padding()
+                .disabled(selectedExercise == nil || weight.isEmpty || isLoading)
+            }
+            .navigationTitle("添加训练")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarItems(trailing: Button("取消") { dismiss() })
+            .background(Color(.systemGroupedBackground))
+            .onAppear {
+                loadExercises()
+                loadTodayRecords()
+            }
+            .alert("错误", isPresented: $showError) {
+                Button("确定", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
+        }
+    }
+    
+    // 加载训练项目
+    private func loadExercises() {
+        let db = Firestore.firestore()
+        db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .getDocuments(source: .default) { snapshot, error in
+                if let error = error {
+                    errorMessage = error.localizedDescription
+                    showError = true
+                    return
+                }
+                
+                if let documents = snapshot?.documents {
+                    self.exercises = documents.compactMap { doc in
+                        try? doc.data(as: Exercise.self)
+                    }
+                }
+            }
+    }
+    
+    private func addTraining() {
+        guard let exercise = selectedExercise,
+              let weightValue = Double(weight),
+              !exercise.name.isEmpty else { return }
+        
+        isLoading = true
+        let db = Firestore.firestore()
+        
+        let trainingData: [String: Any] = [
+            "type": exercise.name,
+            "bodyPart": selectedBodyPart,
+            "sets": sets,
+            "reps": reps,
+            "weight": weightValue,
+            "notes": notes,
+            "date": date,
+            "userId": userId
+        ]
+        
+        db.collection("users")
+            .document(userId)
+            .collection("trainings")
+            .addDocument(data: trainingData) { error in
+                isLoading = false
+                
+                if let error = error {
+                    errorMessage = "添加失败: \(error.localizedDescription)"
+                    showError = true
+                } else {
+                    onTrainingAdded()
+                    dismiss()
+                }
+            }
+    }
+    
+    private func loadTodayRecords() {
+        let db = Firestore.firestore()
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+        
+        db.collection("users")
+            .document(userId)
+            .collection("trainings")
+            .whereField("date", isGreaterThanOrEqualTo: startOfDay)
+            .whereField("date", isLessThan: endOfDay)
+            .getDocuments(source: .default) { snapshot, error in
+                if let documents = snapshot?.documents {
+                    self.todayRecords = documents.compactMap { doc in
+                        let data = doc.data()
+                        return TrainingRecord(
+                            id: doc.documentID,
+                            type: data["type"] as? String ?? "",
+                            bodyPart: data["bodyPart"] as? String ?? "",
+                            sets: data["sets"] as? Int ?? 0,
+                            reps: data["reps"] as? Int ?? 0,
+                            weight: data["weight"] as? Double ?? 0,
+                            notes: data["notes"] as? String ?? "",
+                            date: (data["date"] as? Timestamp)?.dateValue() ?? Date()
+                        )
+                    }
+                }
+            }
+    }
+}
+
+// MARK: - 辅助视图组件
+
+struct BodyPartButton: View {
+    let part: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: bodyPartIcon(part))
+                    .font(.system(size: 24))
+                Text(part)
+                    .font(.system(size: 14))
+            }
+            .frame(width: 80, height: 80)
+            .background(isSelected ? Color.blue : Color(.systemGray6))
+            .foregroundColor(isSelected ? .white : .primary)
+            .cornerRadius(12)
+            .shadow(color: isSelected ? Color.blue.opacity(0.3) : .clear, radius: 4)
+        }
+    }
+    
+    private func bodyPartIcon(_ part: String) -> String {
+        switch part {
+        case "胸部": return "figure.arms.open"
+        case "背部": return "figure.walk"
+        case "腿部": return "figure.run"
+        case "肩部": return "figure.boxing"
+        case "手臂": return "figure.strengthtraining.traditional"
+        case "核心": return "figure.core.training"
+        default: return "figure.mixed.cardio"
+        }
+    }
+}
+
+struct ExerciseCard: View {
+    let exercise: Exercise
+    let isSelected: Bool
+    let onSelect: () -> Void
+    
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 16) {
+                // 左侧图标
+                exerciseIcon
+                
+                // 中间内容
+                exerciseInfo
+                
+                Spacer()
+            }
+            .padding()
+            .background(cardBackground)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var exerciseIcon: some View {
+        Circle()
+            .fill(isSelected ? Color.blue : Color(.systemGray6))
+            .frame(width: 50, height: 50)
+            .overlay(
+                Image(systemName: isSelected ? "checkmark" : "dumbbell.fill")
+                    .foregroundColor(isSelected ? .white : .blue)
+            )
+    }
+    
+    private var exerciseInfo: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(exercise.name)
+                .font(.headline)
+            if let unit = exercise.unit {
+                Text("单位: \(unit)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color(.systemBackground))
+            .shadow(color: .black.opacity(0.05), radius: 4)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.blue : .clear, lineWidth: 2)
+            )
+    }
+}
+
+struct TrainingSearchBar: View {
+    @Binding var text: String
+    
+    var body: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+            TextField("搜索训练项目", text: $text)
+            if !text.isEmpty {
+                Button(action: { text = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+}
+
+// 今日训练记录部分
+struct TodayTrainingSection: View {
+    let records: [TrainingRecord]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader
+            recordsList
+        }
+        .padding(.vertical)
+        .background(Color(.systemGray6).opacity(0.5))
+    }
+    
+    private var sectionHeader: some View {
+        Text("今日已完成")
+            .font(.headline)
+            .padding(.horizontal)
+    }
+    
+    private var recordsList: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(records) { record in
+                    TrainingRecordCard(record: record)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+}
+
+struct TrainingRecordCard: View {
+    let record: TrainingRecord
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(record.type)
+                .font(.subheadline)
+                .fontWeight(.medium)
+            
+            Text("\(record.sets)组 × \(record.reps)次")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            Text("\(Int(record.weight))kg")
+                .font(.caption)
+                .foregroundColor(.blue)
+        }
+        .padding(8)
+        .background(Color(.systemBackground))
+        .cornerRadius(8)
+    }
+}
+
+// 训练详情输入部分
+struct TrainingDetailSection: View {
+    let exercise: Exercise
+    @Binding var sets: Int
+    @Binding var reps: Int
+    @Binding var weight: String
+    @Binding var notes: String
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // 组数和次数选择器
+            HStack(spacing: 20) {
+                // 组数选择
+                VStack {
+                    Text("组数")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $sets) {
+                        ForEach(1...10, id: \.self) { num in
+                            Text("\(num)").tag(num)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 60, height: 100)
+                }
+                
+                // 次数选择
+                VStack {
+                    Text("次数")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $reps) {
+                        ForEach(1...30, id: \.self) { num in
+                            Text("\(num)").tag(num)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 60, height: 100)
+                }
+                
+                // 重量输入
+                VStack {
+                    Text("重量(kg)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    TextField("0", text: $weight)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.center)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 80)
+                }
+            }
+            
+            // 备注输入
+            TextField("备注(选填)", text: $notes)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+        }
+        .padding()
+        .background(Color(.systemBackground))
+    }
+}

@@ -43,13 +43,7 @@ struct CalendarView: View {
         }
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showingAddTraining) {
-            AddTrainingSheet(
-                date: selectedDate,
-                isPresented: $showingAddTraining,
-                onAdd: { type, duration, notes in
-                    addTraining(type: type, duration: duration, notes: notes)
-                }
-            )
+            DayTrainingView(date: selectedDate)
         }
         .onAppear {
             updateWeekDates()
@@ -213,6 +207,8 @@ struct CalendarView: View {
                         },
                         setRestDay: setRestDay,
                         calendar: calendar,
+                        trainingRecords: trainingRecords,
+                        dateFormatter: dateFormatter,
                         currentSwipedDate: $currentSwipedDate
                     )
                     Divider()
@@ -267,7 +263,6 @@ struct CalendarView: View {
             .getDocuments { snapshot, error in
                 if let error = error {
                     print("Error loading training records: \(error)")
-                    // 添加错误处理UI
                     return
                 }
                 
@@ -276,14 +271,20 @@ struct CalendarView: View {
                 snapshot?.documents.forEach { document in
                     let data = document.data()
                     if let type = data["type"] as? String,
-                       let duration = data["duration"] as? Int,
+                       let bodyPart = data["bodyPart"] as? String,
+                       let sets = data["sets"] as? Int,
+                       let reps = data["reps"] as? Int,
+                       let weight = data["weight"] as? Double,
                        let notes = data["notes"] as? String,
                        let date = (data["date"] as? Timestamp)?.dateValue() {
                         
                         let record = TrainingRecord(
                             id: document.documentID,
                             type: type,
-                            duration: duration,
+                            bodyPart: bodyPart,
+                            sets: sets,
+                            reps: reps,
+                            weight: weight,
                             notes: notes,
                             date: date
                         )
@@ -412,30 +413,6 @@ struct CalendarView: View {
             }
     }
     
-    private func addTraining(type: String, duration: Int, notes: String) {
-        let db = Firestore.firestore()
-        
-        let trainingData: [String: Any] = [
-            "type": type,
-            "duration": duration,
-            "notes": notes,
-            "date": selectedDate,
-            "userId": userId
-        ]
-        
-        db.collection("users")
-            .document(userId)
-            .collection("trainings")
-            .addDocument(data: trainingData) { error in
-                if let error = error {
-                    print("Error adding training: \(error)")
-                } else {
-                    // 重新加载训练记录
-                    loadTrainingRecords()
-                }
-            }
-    }
-    
     private func weekRangeText() -> String {
         let firstDate = weekDates.first ?? selectedDate
         let lastDate = weekDates.last ?? selectedDate
@@ -458,6 +435,8 @@ struct DayCell: View {
     let onTap: () -> Void
     let setRestDay: (Date) -> Void
     let calendar: Calendar
+    let trainingRecords: [String: [TrainingRecord]]
+    let dateFormatter: DateFormatter
     
     @Binding var currentSwipedDate: Date?
     @State private var offset: CGFloat = 0
@@ -566,6 +545,24 @@ struct DayCell: View {
                     }
                     .buttonStyle(ScaleButtonStyle())
                     .padding(.trailing, 5)
+                }
+                
+                if hasTraining, 
+                   let records = trainingRecords[dateFormatter.string(from: date)] {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(records) { record in
+                            Text(record.bodyPart)
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.gray.opacity(0.1))
+                                )
+                        }
+                    }
+                    .padding(.top, 4)
                 }
             }
             .padding(.horizontal, 16)
@@ -689,86 +686,6 @@ extension AnyTransition {
             removal: .scale(scale: 0.6).combined(with: .opacity)
                 .animation(.easeOut(duration: 0.2))
         )
-    }
-}
-
-// 训练记录模型
-struct TrainingRecord: Identifiable {
-    let id: String
-    let type: String
-    let duration: Int
-    let notes: String
-    let date: Date
-}
-
-// 美化添加训练表单
-struct AddTrainingSheet: View {
-    let date: Date
-    @Binding var isPresented: Bool
-    let onAdd: (String, Int, String) -> Void
-    
-    @State private var type = ""
-    @State private var duration = ""
-    @State private var notes = ""
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section {
-                    TextField("训练类型", text: $type)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    TextField("时长(分钟)", text: $duration)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    TextField("备注", text: $notes)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                } header: {
-                    Text("训练信息")
-                        .foregroundColor(.secondary)
-                }
-                
-                Section {
-                    HStack {
-                        Image(systemName: "calendar")
-                            .foregroundColor(.blue)
-                        Text(date.formatted(.dateTime.year().month().day().weekday()))
-                    }
-                } header: {
-                    Text("训练时间")
-                        .foregroundColor(.secondary)
-                }
-                
-                Section {
-                    Button(action: {
-                        if let durationInt = Int(duration), !type.isEmpty {
-                            onAdd(type, durationInt, notes)
-                            isPresented = false
-                        }
-                    }) {
-                        Text("添加训练")
-                            .frame(maxWidth: .infinity)
-                            .foregroundColor(.white)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(
-                                        type.isEmpty || duration.isEmpty ?
-                                        Color.gray :
-                                        Color.blue
-                                    )
-                            )
-                    }
-                    .disabled(type.isEmpty || duration.isEmpty)
-                }
-            }
-            .navigationTitle("添加训练")
-            .navigationBarItems(
-                trailing: Button("取消") {
-                    isPresented = false
-                }
-                .foregroundColor(.blue)
-            )
-        }
     }
 }
 
