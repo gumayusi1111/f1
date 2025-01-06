@@ -38,13 +38,25 @@ struct AddExerciseView: View {
     @State private var showSaveAnimation = false
     @State private var saveScale: CGFloat = 1
     
+    // 在 AddExerciseView 中添加状态
+    @State private var nameError: String? = nil  // 添加错误状态
+    @State private var isCheckingName = false    // 添加检查状态
+    
     init(onExerciseAdded: @escaping (Exercise) -> Void) {
         self.onExerciseAdded = onExerciseAdded
     }
     
     // MARK: - Computed Properties
     private var isFormValid: Bool {
-        !name.isEmpty && selectedCategory != nil && selectedUnit != nil
+        // 添加长度验证
+        guard !name.isEmpty && 
+              name.count >= 2 && 
+              name.count <= 30 && 
+              selectedCategory != nil && 
+              selectedUnit != nil else {
+            return false
+        }
+        return nameError == nil  // 确保没有错误
     }
     
     var body: some View {
@@ -58,9 +70,44 @@ struct AddExerciseView: View {
                             .foregroundColor(.primary)
                         
                         HStack {
-                            TextField("例如：卧推", text: $name)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 16))
+                            TextField("例如：卧推", text: Binding(
+                                get: { self.name },
+                                set: { 
+                                    self.name = $0
+                                    print("\n========== 名称输入验证 ==========")
+                                    print("📝 输入内容: \($0)")
+                                    
+                                    // 实时验证
+                                    if $0.isEmpty {
+                                        self.nameError = "请输入项目名称"
+                                        print("❌ 验证失败: 名称为空")
+                                    } else if $0.count < 2 {
+                                        self.nameError = "名称至少需要2个字符"
+                                        print("❌ 验证失败: 名称过短 (长度: \($0.count))")
+                                    } else if $0.count > 30 {
+                                        self.nameError = "名称不能超过30个字符"
+                                        print("❌ 验证失败: 名称过长 (长度: \($0.count))")
+                                    } else {
+                                        self.nameError = nil
+                                        print("✅ 验证通过")
+                                    }
+                                    print("当前错误状态: \(String(describing: self.nameError))")
+                                    print("===================================\n")
+                                }
+                            ))
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 16))
+                            .overlay(
+                                Group {
+                                    if let error = nameError {
+                                        Text(error)
+                                            .font(.caption)
+                                            .foregroundColor(.red)
+                                            .padding(.top, 40)
+                                    }
+                                },
+                                alignment: .bottom
+                            )
                             
                             if !name.isEmpty {
                                 Button(action: { name = "" }) {
@@ -219,94 +266,144 @@ struct AddExerciseView: View {
     
     // MARK: - Functions
     private func saveExercise() {
-        guard isFormValid else { return }
+        print("\n========== 开始保存流程 ==========")
+        print("📋 表单状态检查:")
+        print("- 名称: \(name) (长度: \(name.count))")
+        print("- 类别: \(selectedCategory ?? "未选择")")
+        print("- 单位: \(selectedUnit ?? "未选择")")
+        print("- 表单验证结果: \(isFormValid ? "✅ 通过" : "❌ 未通过")")
         
-        // 添加按钮动画
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-            saveScale = 0.95
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                saveScale = 1
-            }
-        }
-        
-        isLoading = true
-        print("\n========== 开始保存训练项目 ==========")
-        print("📝 项目名称: \(name)")
-        print("📑 类别: \(selectedCategory ?? "未选择")")
-        print("📏 单位: \(selectedUnit ?? "未选择")")
-        
-        let exercise = Exercise(
-            id: UUID().uuidString,
-            name: name,
-            category: selectedCategory!,
-            description: description,
-            notes: notes,
-            isSystemPreset: false,
-            unit: selectedUnit,
-            createdAt: Date(),
-            updatedAt: Date(),
-            maxRecord: nil,
-            lastRecordDate: nil
-        )
-        
-        // 保存到 Firestore
-        let db = Firestore.firestore()
-        guard !userId.isEmpty else {
-            showError = true
-            errorMessage = "用户ID不存在"
-            isLoading = false
-            print("❌ 保存失败: 用户ID不存在")
+        guard isFormValid else {
+            print("❌ 表单验证未通过，终止保存")
+            print("========== 保存终止 ==========\n")
             return
         }
         
-        print("🔄 正在保存到 Firestore...")
-        
-        db.collection("users")
-            .document(userId)
-            .collection("exercises")
-            .document(exercise.id)
-            .setData(exercise.dictionary) { error in
-                if let error = error {
-                    showError = true
-                    errorMessage = "保存失败: \(error.localizedDescription)"
-                    isLoading = false
-                    print("❌ 保存失败: \(error.localizedDescription)")
-                } else {
-                    // 1. 触觉反馈
-                    let notificationGenerator = UINotificationFeedbackGenerator()
-                    notificationGenerator.prepare() // 提前准备减少延迟
-                    notificationGenerator.notificationOccurred(.success)
-                    
-                    // 2. 播放系统音效
-                    AudioServicesPlaySystemSound(1004) // 使用系统提示音
-                    
-                    // 3. 显示成功动画
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        showSuccessToast = true
-                        showSaveAnimation = true
-                    }
-                    
-                    onExerciseAdded(exercise)
-                    
-                    // 延迟关闭
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation {
-                            showSuccessToast = false
-                            showSaveAnimation = false
+        // 添加名称重复检查
+        Task {
+            isCheckingName = true
+            if await checkNameDuplicate() {
+                nameError = "该项目名称已存在"
+                isCheckingName = false
+                return
+            }
+            isCheckingName = false
+            
+            // 添加按钮动画
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                saveScale = 0.95
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    saveScale = 1
+                }
+            }
+            
+            isLoading = true
+            print("\n========== 开始保存训练项目 ==========")
+            print("📝 项目名称: \(name)")
+            print("📑 类别: \(selectedCategory ?? "未选择")")
+            print("📏 单位: \(selectedUnit ?? "未选择")")
+            
+            let exercise = Exercise(
+                id: UUID().uuidString,
+                name: name,
+                category: selectedCategory!,
+                description: description,
+                notes: notes,
+                isSystemPreset: false,
+                unit: selectedUnit,
+                createdAt: Date(),
+                updatedAt: Date(),
+                maxRecord: nil,
+                lastRecordDate: nil
+            )
+            
+            // 保存到 Firestore
+            let db = Firestore.firestore()
+            guard !userId.isEmpty else {
+                showError = true
+                errorMessage = "用户ID不存在"
+                isLoading = false
+                print("❌ 保存失败: 用户ID不存在")
+                return
+            }
+            
+            print("🔄 正在保存到 Firestore...")
+            
+            db.collection("users")
+                .document(userId)
+                .collection("exercises")
+                .document(exercise.id)
+                .setData(exercise.dictionary) { error in
+                    if let error = error {
+                        showError = true
+                        errorMessage = "保存失败: \(error.localizedDescription)"
+                        isLoading = false
+                        print("❌ 保存失败: \(error.localizedDescription)")
+                    } else {
+                        // 1. 触觉反馈
+                        let notificationGenerator = UINotificationFeedbackGenerator()
+                        notificationGenerator.prepare() // 提前准备减少延迟
+                        notificationGenerator.notificationOccurred(.success)
+                        
+                        // 2. 播放系统音效
+                        AudioServicesPlaySystemSound(1004) // 使用系统提示音
+                        
+                        // 3. 显示成功动画
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                            showSuccessToast = true
+                            showSaveAnimation = true
                         }
                         
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        onExerciseAdded(exercise)
+                        
+                        // 使用 Task 和 await 替代 DispatchQueue
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5秒
+                            
+                            withAnimation {
+                                showSuccessToast = false
+                                showSaveAnimation = false
+                            }
+                            
+                            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3秒
                             isLoading = false
                             dismiss()
                         }
                     }
+                    
+                    print("========== 保存结束 ==========\n")
                 }
-                
-                print("========== 保存结束 ==========\n")
-            }
+        }
+    }
+    
+    // 添加名称重复检查函数
+    private func checkNameDuplicate() async -> Bool {
+        print("\n========== 开始检查名称重复 ==========")
+        print("📝 检查名称: \(name)")
+        
+        let db = Firestore.firestore()
+        do {
+            let trimmedName = name.trimmingCharacters(in: .whitespaces)
+            print("🔍 处理后的名称: \(trimmedName)")
+            
+            let snapshot = try await db.collection("users")
+                .document(userId)
+                .collection("exercises")
+                .whereField("name", isEqualTo: trimmedName)
+                .getDocuments()
+            
+            let isDuplicate = !snapshot.documents.isEmpty
+            print(isDuplicate ? "❌ 发现重复名称" : "✅ 名称可用")
+            print("========== 检查结束 ==========\n")
+            return isDuplicate
+        } catch {
+            print("❌ 检查失败: \(error)")
+            print("========== 检查异常结束 ==========\n")
+            return false
+        }
     }
 }
 
