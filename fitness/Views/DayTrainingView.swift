@@ -432,27 +432,76 @@ struct DayTrainingView: View {
         let startOfDay = calendar.startOfDay(for: date)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
         
+        print("\n========== 开始加载训练记录 ==========")
+        print("📅 查询日期范围:")
+        print("开始时间: \(startOfDay)")
+        print("结束时间: \(endOfDay)")
+        
         db.collection("users")
             .document(userId)
             .collection("trainings")
             .whereField("date", isGreaterThanOrEqualTo: startOfDay)
             .whereField("date", isLessThan: endOfDay)
             .addSnapshotListener { snapshot, error in
-                if let documents = snapshot?.documents {
-                    self.trainings = documents.compactMap { doc in
-                        let data = doc.data()
-                        return TrainingRecord(
-                            id: doc.documentID,
-                            type: data["type"] as? String ?? "",
-                            bodyPart: data["bodyPart"] as? String ?? "",
-                            sets: data["sets"] as? Int ?? 0,
-                            reps: data["reps"] as? Int ?? 0,
-                            weight: data["weight"] as? Double ?? 0,
-                            notes: data["notes"] as? String ?? "",
-                            date: (data["date"] as? Timestamp)?.dateValue() ?? Date()
-                        )
-                    }
+                if let error = error {
+                    print("❌ 加载失败: \(error.localizedDescription)")
+                    return
                 }
+                
+                guard let documents = snapshot?.documents else {
+                    print("⚠️ 没有找到文档")
+                    return
+                }
+                
+                print("\n🔍 解析训练记录 (\(documents.count) 条):")
+                
+                self.trainings = documents.compactMap { doc in
+                    let data = doc.data()
+                    
+                    print("\n📝 记录 ID: \(doc.documentID)")
+                    print("原始数据:")
+                    data.forEach { key, value in
+                        print("- \(key): \(value)")
+                    }
+                    
+                    // 特别检查时间字段
+                    if let timestamp = data["date"] as? Timestamp {
+                        let date = timestamp.dateValue()
+                        print("时间戳解析:")
+                        print("- Timestamp: \(timestamp)")
+                        print("- 转换后日期: \(date)")
+                        print("- 格式化时间: \(date.formatted(.dateTime.hour().minute()))")
+                    } else {
+                        print("⚠️ 时间字段缺失或格式错误")
+                    }
+                    
+                    // 获取 createdAt，如果已存在就使用原有的，否则使用当前时间
+                    let createdAt: Date
+                    if let timestamp = data["createdAt"] as? Timestamp {
+                        createdAt = timestamp.dateValue()
+                    } else if let existingRecord = self.trainings.first(where: { $0.id == doc.documentID }) {
+                        // 如果是已存在的记录，保留原有的 createdAt
+                        createdAt = existingRecord.createdAt
+                    } else {
+                        // 新记录使用当前时间
+                        createdAt = Date()
+                    }
+                    
+                    return TrainingRecord(
+                        id: doc.documentID,
+                        type: data["type"] as? String ?? "",
+                        bodyPart: data["bodyPart"] as? String ?? "",
+                        sets: data["sets"] as? Int ?? 0,
+                        reps: data["reps"] as? Int ?? 0,
+                        weight: data["weight"] as? Double ?? 0,
+                        notes: data["notes"] as? String ?? "",
+                        date: (data["date"] as? Timestamp)?.dateValue() ?? Date(),
+                        createdAt: createdAt
+                    )
+                }
+                
+                print("\n✅ 成功加载 \(self.trainings.count) 条训练记录")
+                print("========== 加载完成 ==========\n")
             }
     }
 }
@@ -504,9 +553,13 @@ struct TrainingRecordRow: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Text(record.date.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 12))
+                    Text(record.createdAt, style: .time)
+                }
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
             }
         }
         .padding(.vertical, 12)
@@ -518,6 +571,13 @@ struct TrainingRecordRow: View {
         )
         .padding(.horizontal)
         .padding(.vertical, 4)
+        .onAppear {
+            print("\n⏰ 训练记录时间显示:")
+            print("记录 ID: \(record.id)")
+            print("原始日期: \(record.date)")
+            print("格式化时间: \(record.date.formatted(.dateTime.hour().minute()))")
+            print("时间戳: \(record.date.timeIntervalSince1970)")
+        }
     }
     
     // 获取类别颜色

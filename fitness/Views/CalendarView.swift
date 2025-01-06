@@ -292,7 +292,8 @@ struct CalendarView: View {
                             reps: reps,
                             weight: weight,
                             notes: notes,
-                            date: date
+                            date: date,
+                            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
                         )
                         
                         let dateString = dateFormatter.string(from: date)

@@ -467,12 +467,13 @@ struct AddTrainingView: View {
         
         let trainingData: [String: Any] = [
             "type": exercise.name,
-            "bodyPart": filterBodyPart,
+            "bodyPart": exercise.category,
             "sets": sets,
             "reps": reps,
             "weight": weightValue,
             "notes": notes,
-            "date": date,
+            "date": date,  // 保留日期用于查询
+            "createdAt": FieldValue.serverTimestamp(),  // 使用服务器时间戳
             "userId": userId
         ]
         
