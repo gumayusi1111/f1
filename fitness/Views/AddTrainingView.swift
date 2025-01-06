@@ -622,72 +622,85 @@ struct TrainingDetailSection: View {
     var body: some View {
         VStack(spacing: 20) {
             // 顶部把手示意
-            RoundedRectangle(cornerRadius: 2.5)
+            RoundedRectangle(cornerRadius: 3)
                 .fill(Color(.systemGray4))
-                .frame(width: 40, height: 5)
+                .frame(width: 36, height: 5)
                 .padding(.top, 8)
+                .padding(.bottom, 4)
             
-            // 标题
-            Text(exercise.name)
-                .font(.headline)
-                .padding(.bottom, 5)
+            // 标题区域
+            VStack(spacing: 4) {
+                Text(exercise.name)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                
+                if let unit = exercise.unit {
+                    Text("单位: \(unit)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.bottom, 10)
             
             // 主要输入区域
-            HStack(spacing: 25) {
+            HStack(spacing: 20) {
                 // 组数选择器
                 NumberPickerColumn(
                     title: "组数",
                     value: $sets,
                     range: 1...10,
-                    tint: .blue
+                    tint: .blue,
+                    icon: "number.square.fill"
                 )
                 
-                // 分隔线
-                Rectangle()
-                    .fill(Color(.systemGray5))
-                    .frame(width: 1, height: 80)
+                Divider()
+                    .frame(height: 80)
                 
                 // 次数选择器
                 NumberPickerColumn(
                     title: "次数",
                     value: $reps,
                     range: 1...30,
-                    tint: .blue
+                    tint: .blue,
+                    icon: "repeat.circle.fill"
                 )
                 
-                // 分隔线
-                Rectangle()
-                    .fill(Color(.systemGray5))
-                    .frame(width: 1, height: 80)
+                Divider()
+                    .frame(height: 80)
                 
-                // 重量输入
+                // 数值输入
                 WeightInputColumn(
-                    value: Binding(
-                        get: { weight },
-                        set: { weight = $0 }
-                    ),
+                    value: Binding(get: { weight }, set: { weight = $0 }),
                     exercise: exercise,
                     integerPart: $selectedIntegerPart,
                     decimalPart: $selectedDecimalPart
                 )
             }
             .padding(.vertical, 10)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(12)
             
             // 备注输入
             VStack(alignment: .leading, spacing: 8) {
-                Text("备注")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                HStack {
+                    Image(systemName: "note.text")
+                        .foregroundColor(.secondary)
+                    Text("备注")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                
                 TextField("添加备注", text: $notes)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .font(.system(size: 15))
             }
             .padding(.horizontal)
+            .padding(.top, 8)
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(20, corners: [.topLeft, .topRight])
-        .shadow(color: .black.opacity(0.05), radius: 5, y: -2)
+        .shadow(color: .black.opacity(0.1), radius: 10, y: -5)
     }
 }
 
@@ -697,12 +710,17 @@ struct NumberPickerColumn: View {
     @Binding var value: Int
     let range: ClosedRange<Int>
     let tint: Color
+    let icon: String
     
     var body: some View {
-        VStack(spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .foregroundColor(tint)
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
             
             Picker("", selection: $value) {
                 ForEach(range, id: \.self) { num in
@@ -791,63 +809,56 @@ struct WeightInputColumn: View {
     }
     
     var body: some View {
-        VStack(spacing: 6) {
-            Text(exercise.unit ?? "")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
+        VStack(spacing: 8) {
             HStack(spacing: 4) {
-                // 整数部分选择器
+                Image(systemName: getUnitIcon())
+                    .foregroundColor(.blue)
+                Text(exercise.unit ?? "")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            HStack(spacing: 2) {
                 Picker("", selection: $integerPart) {
                     ForEach(integerRange, id: \.self) { num in
                         Text("\(num)")
                             .tag(num)
+                            .monospacedDigit()
                     }
                 }
-                .pickerStyle(.wheel)  // 改回滚动样式
-                .frame(width: 80, height: 100)
+                .pickerStyle(.wheel)
+                .frame(width: 70, height: 100)
                 .clipped()
                 
                 Text(".")
                     .font(.title3)
                     .foregroundColor(.secondary)
+                    .frame(width: 10)
                 
-                // 小数部分选择器
                 Picker("", selection: $decimalPart) {
                     ForEach(decimalParts, id: \.self) { num in
                         Text(getDecimalText(num))
                             .tag(num)
+                            .monospacedDigit()
                     }
                 }
-                .pickerStyle(.wheel)  // 改回滚动样式
-                .frame(width: 60, height: 100)
+                .pickerStyle(.wheel)
+                .frame(width: 50, height: 100)
                 .clipped()
-            }
-            .onChange(of: integerPart) { oldValue, newValue in
-                updateValue()
-            }
-            .onChange(of: decimalPart) { oldValue, newValue in
-                updateValue()
             }
         }
     }
     
-    private func updateValue() {
-        let finalValue = switch exercise.unit {
-        case "次", "组":
-            // 次数和组数，5表示0.5
-            Double(integerPart) + (decimalPart == 5 ? 0.5 : 0.0)
-        case "秒":
-            // 秒数，直接使用一位小数
-            Double(integerPart) + Double(decimalPart) / 10.0
-        case "分钟":
-            // 分钟，将秒数转换为分钟的小数部分
-            Double(integerPart) + Double(decimalPart) / 60.0
-        default:
-            // 其他单位（重量、距离等）使用标准小数
-            Double(integerPart) + Double(decimalPart) / 100.0
+    // 根据单位类型返回对应图标
+    private func getUnitIcon() -> String {
+        switch exercise.unit {
+        case "kg", "lbs": return "scalemass.fill"
+        case "次", "组": return "number.circle.fill"
+        case "秒": return "stopwatch.fill"
+        case "分钟": return "clock.fill"
+        case "m", "km", "mile": return "ruler.fill"
+        default: return "number.circle.fill"
         }
-        value = String(format: "%.2f", finalValue)
     }
 }
 
