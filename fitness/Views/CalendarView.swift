@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseFirestore
+import AVFoundation
 
 struct CalendarView: View {
     @State private var selectedDate = Date()
@@ -463,12 +464,21 @@ struct DayCell: View {
     @State private var isSwiped = false
     @State private var isAnimating = false
     
+    // 添加系统声音播放器
+    private let soundPlayer = SystemSoundID(1519) // 系统声音: positive_change.caf
+    
     var body: some View {
         ZStack {
             // 滑动显示的按钮
             HStack {
                 Spacer()
                 Button(action: {
+                    // 播放系统声音
+                    AudioServicesPlaySystemSound(soundPlayer)
+                    
+                    // 触发系统振动
+                    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                    
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         setRestDay(date)
                         resetCell()
@@ -478,6 +488,10 @@ struct DayCell: View {
                         Image(systemName: isRestDay ? "figure.run" : "moon.zzz.fill")
                             .font(.system(size: 20))
                             .scaleEffect(isAnimating ? 1.1 : 1.0)
+                            .rotation3DEffect(
+                                .degrees(isRestDay ? 180 : 0),
+                                axis: (x: 0, y: 1, z: 0)
+                            )
                         Text(isRestDay ? "训练日" : "休息日")
                             .font(.system(size: 12))
                     }
