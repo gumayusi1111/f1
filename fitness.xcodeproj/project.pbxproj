@@ -12,6 +12,7 @@
 		3285A07B2D25A81600C98B96 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 3285A07A2D25A81600C98B96 /* FirebaseAnalytics */; };
 		3285A07D2D25A81600C98B96 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 3285A07C2D25A81600C98B96 /* FirebaseCore */; };
 		3285A0B22D25AE3E00C98B96 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 3285A0B12D25AE3E00C98B96 /* FirebaseAuth */; };
+		32E965922D2C25460009B400 /* timer_end.wav in Resources */ = {isa = PBXBuildFile; fileRef = 32E965912D2C25460009B400 /* timer_end.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,6 +36,7 @@
 		3285A04A2D25A7A100C98B96 /* fitness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = fitness.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3285A05A2D25A7A300C98B96 /* fitnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = fitnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3285A0642D25A7A300C98B96 /* fitnessUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = fitnessUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		32E965912D2C25460009B400 /* timer_end.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = timer_end.wav; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -95,6 +97,7 @@
 		3285A0412D25A7A100C98B96 = {
 			isa = PBXGroup;
 			children = (
+				32E9658D2D2C24AB0009B400 /* Resources */,
 				3285A04C2D25A7A100C98B96 /* fitness */,
 				3285A05D2D25A7A300C98B96 /* fitnessTests */,
 				3285A0672D25A7A300C98B96 /* fitnessUITests */,
@@ -111,6 +114,22 @@
 				3285A0642D25A7A300C98B96 /* fitnessUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		32E9658D2D2C24AB0009B400 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				32E9658E2D2C24C20009B400 /* Sounds */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		32E9658E2D2C24C20009B400 /* Sounds */ = {
+			isa = PBXGroup;
+			children = (
+				32E965912D2C25460009B400 /* timer_end.wav */,
+			);
+			path = Sounds;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -237,6 +256,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				32E965922D2C25460009B400 /* timer_end.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

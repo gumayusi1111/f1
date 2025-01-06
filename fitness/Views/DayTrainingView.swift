@@ -778,7 +778,7 @@ struct RestTimerView: View {
     
     private func startTimer() {
         currentTimer?.invalidate()
-        remainingTime = TimeInterval(selectedSeconds)  // 直接使用秒数
+        remainingTime = TimeInterval(selectedSeconds)
         isTimerRunning = true
         isPresented = false
         
@@ -788,15 +788,38 @@ struct RestTimerView: View {
             } else {
                 timer.invalidate()
                 isTimerRunning = false
-                AudioServicesPlaySystemSound(1007)
                 
+                // 修改音频播放代码
+                if let soundURL = Bundle.main.url(forResource: "timer_end", withExtension: "wav") {
+                    print("找到音频文件: \(soundURL)")  // 调试信息
+                    var soundID: SystemSoundID = 0
+                    let status = AudioServicesCreateSystemSoundID(soundURL as CFURL, &soundID)
+                    if status == kAudioServicesNoError {
+                        print("音频初始化成功")  // 调试信息
+                        AudioServicesPlaySystemSound(soundID)
+                    } else {
+                        print("音频初始化失败: \(status)")  // 调试信息
+                        // 使用系统默认音效作为备选
+                        AudioServicesPlaySystemSound(1033)
+                    }
+                } else {
+                    print("未找到音频文件")  // 调试信息
+                    // 使用系统默认音效作为备选
+                    AudioServicesPlaySystemSound(1033)
+                }
+                
+                // 修改通知音效
                 let content = UNMutableNotificationContent()
                 content.title = "休息时间结束"
                 content.body = "该继续训练了！"
+                // 使用系统默认音效作为备选
                 content.sound = .default
-                let request = UNNotificationRequest(identifier: UUID().uuidString,
-                                                  content: content,
-                                                  trigger: nil)
+                
+                let request = UNNotificationRequest(
+                    identifier: UUID().uuidString,
+                    content: content,
+                    trigger: nil
+                )
                 UNUserNotificationCenter.current().add(request)
             }
         }
