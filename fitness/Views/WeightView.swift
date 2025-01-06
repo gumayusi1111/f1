@@ -3100,8 +3100,7 @@ struct WeightView: View {
     
     // 在 WeightView 中添加体重变化监控函数
     private func checkWeightChange() {
-        let calendar = Calendar.current
-        let threeDaysAgo = calendar.date(byAdding: .day, value: -3, to: Date()) ?? Date()
+        let threeDaysAgo = Calendar.current.date(byAdding: .day, value: -3, to: Date()) ?? Date()
         
         // 获取最近三天的记录
         let recentRecords = weightRecords.filter { record in
