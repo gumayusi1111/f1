@@ -24,11 +24,16 @@ struct AddTrainingView: View {
     @AppStorage("todayTrainingPart") private var todayTrainingPart: String = "" // 存储今日训练部位
     
     // 添加数值选择器的状态变量
-    @State private var selectedIntegerPart: Int = 1
-    @State private var selectedDecimalPart: Int = 0
+    @State private var selectedIntegerPart = 1
+    @State private var selectedDecimalPart = 0
     
     let bodyParts = ["全部", "胸部", "背部", "腿部", "肩部", "手臂", "核心"]
     var onTrainingAdded: () -> Void
+    
+    // 添加缓存相关的属性
+    private let exercisesCacheKey = "cachedExercises"
+    private let exercisesCacheTimeKey = "exercisesCacheTime"
+    private let cacheValidDuration: TimeInterval = 24 * 60 * 60 // 24小时
     
     init(date: Date, onTrainingAdded: @escaping () -> Void) {
         self.date = date
@@ -117,22 +122,29 @@ struct AddTrainingView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         ForEach(bodyParts, id: \.self) { part in
-                            BodyPartButton(
-                                part: part,
-                                count: categoryCounts[part] ?? 0,
-                                isSelected: selectedBodyPart == part,
-                                action: { 
-                                    withAnimation { 
-                                        hideTrainingDetail()
-                                        selectedBodyPart = part 
-                                        playHapticFeedback()
-                                        if part != "全部" {
-                                            todayTrainingPart = part
-                                            saveTrainingPart()
+                            Button(action: {
+                                withAnimation {
+                                    selectedBodyPart = part
+                                    updateTodayTrainingPart() // 更新今日训练部位
+                                }
+                            }) {
+                                BodyPartButton(
+                                    part: part,
+                                    count: categoryCounts[part] ?? 0,
+                                    isSelected: selectedBodyPart == part,
+                                    action: { 
+                                        withAnimation { 
+                                            hideTrainingDetail()
+                                            selectedBodyPart = part 
+                                            playHapticFeedback()
+                                            if part != "全部" {
+                                                todayTrainingPart = part
+                                                saveTrainingPart()
+                                            }
                                         }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                     .padding(.horizontal)
@@ -254,6 +266,13 @@ struct AddTrainingView: View {
     
     // 加载训练项目
     private func loadExercises() {
+        // 先尝试从缓存加载
+        if let cachedExercises = loadFromCache() {
+            self.exercises = cachedExercises
+            print("📦 从缓存加载训练项目: \(cachedExercises.count) 个")
+            return
+        }
+        
         let db = Firestore.firestore()
         let group = DispatchGroup()
         var allExercises: [Exercise] = []
@@ -305,85 +324,88 @@ struct AddTrainingView: View {
         group.notify(queue: .main) { [self] in
             self.exercises = allExercises
             print("✅ 加载完成，共 \(allExercises.count) 个项目")
+            // 保存到缓存
+            saveToCache(exercises: allExercises)
+        }
+    }
+    
+    // 缓存相关方法
+    private func loadFromCache() -> [Exercise]? {
+        guard let lastCacheTime = UserDefaults.standard.object(forKey: exercisesCacheTimeKey) as? Date else {
+            return nil
+        }
+        
+        // 检查缓存是否过期
+        if Date().timeIntervalSince(lastCacheTime) > cacheValidDuration {
+            print("⚠️ 缓存已过期")
+            return nil
+        }
+        
+        guard let data = UserDefaults.standard.data(forKey: exercisesCacheKey),
+              let exercises = try? JSONDecoder().decode([Exercise].self, from: data) else {
+            return nil
+        }
+        
+        return exercises
+    }
+    
+    private func saveToCache(exercises: [Exercise]) {
+        guard let data = try? JSONEncoder().encode(exercises) else { return }
+        UserDefaults.standard.set(data, forKey: exercisesCacheKey)
+        UserDefaults.standard.set(Date(), forKey: exercisesCacheTimeKey)
+        print("💾 训练项目已缓存: \(exercises.count) 个")
+    }
+    
+    // 更新今日训练部位的方法
+    private func updateTodayTrainingPart() {
+        // 只有当选择了非"全部"的部位时才更新
+        if selectedBodyPart != "全部" {
+            todayTrainingPart = selectedBodyPart
+            print("📝 更新今日训练部位: \(selectedBodyPart)")
         }
     }
     
     private func loadLastRecord(for exercise: Exercise) {
-        let db = Firestore.firestore()
+        let recordsPath = "users/\(userId)/exercises/\(exercise.id)/records"
+        print("🔍 开始查询记录 - 路径: \(recordsPath)")
         
-        // 打印查询路径
-        let path = "users/\(userId)/exercises/\(exercise.id)/records"
-        print("🔍 开始查询记录 - 路径: \(path)")
-        print("📋 训练项目信息:")
-        print("  - ID: \(exercise.id)")
-        print("  - 名称: \(exercise.name)")
-        print("  - 类别: \(exercise.category)")
-        print("  - 是否系统预设: \(exercise.isSystemPreset)")
-        
-        let recordsRef = db.collection("users")
-            .document(userId)
-            .collection("exercises")
-            .document(exercise.isSystemPreset ? exercise.id : exercise.id.uppercased())
-            .collection("records")
+        Firestore.firestore().collection(recordsPath)
             .order(by: "date", descending: true)
             .limit(to: 1)
-        
-        recordsRef.getDocuments { snapshot, error in
-            if let error = error {
-                print("❌ 查询失败:")
-                print("  - 错误信息: \(error.localizedDescription)")
-                return
-            }
-            
-            print("📊 查询结果:")
-            print("  - 是否有文档: \(snapshot?.documents.isEmpty == false ? "是" : "否")")
-            print("  - 文档数量: \(snapshot?.documents.count ?? 0)")
-            
-            if let document = snapshot?.documents.first {
-                print("📄 找到最新记录:")
-                print("  - 文档ID: \(document.documentID)")
-                print("  - 所有字段: \(document.data())")
+            .getDocuments { snapshot, error in
+                if let error = error {
+                    print("❌ 查询失败: \(error.localizedDescription)")
+                    return
+                }
                 
-                if let value = document.get("value") as? Double {
+                if let document = snapshot?.documents.first,
+                   let value = document.data()["value"] as? Double {
                     print("✅ 成功获取数值: \(value)")
                     
                     DispatchQueue.main.async {
+                        // 1. 先更新 exercises 数组中的记录
                         if let index = self.exercises.firstIndex(where: { $0.id == exercise.id }) {
-                            // 更新记录
-                            self.exercises[index].lastRecord = value
-                            print("💾 更新成功 - \(exercise.name): \(value)")
+                            var updatedExercise = self.exercises[index]
+                            updatedExercise.lastRecord = value
+                            self.exercises[index] = updatedExercise
                             
-                            // 如果当前选中的就是这个项目，更新输入值和范围
+                            // 2. 如果是当前选中的运动，更新 selectedExercise
                             if self.selectedExercise?.id == exercise.id {
-                                // 设置整数部分
+                                self.selectedExercise = updatedExercise
+                                
+                                // 3. 设置初始值
                                 self.selectedIntegerPart = Int(value)
+                                self.selectedDecimalPart = Int((value.truncatingRemainder(dividingBy: 1)) * 100)
                                 
-                                // 设置小数部分
-                                let decimal = value.truncatingRemainder(dividingBy: 1)
-                                switch exercise.unit {
-                                case "次", "组":
-                                    self.selectedDecimalPart = decimal >= 0.5 ? 5 : 0
-                                case "秒":
-                                    self.selectedDecimalPart = Int(decimal * 10)
-                                case "分钟":
-                                    self.selectedDecimalPart = Int(decimal * 60)
-                                default:
-                                    self.selectedDecimalPart = Int(decimal * 100)
-                                }
-                                
-                                // 强制刷新 WeightInputColumn
-                                self.weight = String(format: "%.2f", value)
+                                // 4. 更新显示的值
+                                self.updateValue()
                             }
                         }
+                        
+                        print("💾 更新成功 - \(exercise.name): \(value)")
                     }
-                } else {
-                    print("⚠️ 无法获取 value 字段")
-                    print("  - 可用字段: \(document.data().keys)")
                 }
-            } else {
-                print("ℹ️ 没有找到 \(exercise.name) 的历史记录")
             }
-        }
     }
     
     private func updateValue() {
@@ -406,6 +428,11 @@ struct AddTrainingView: View {
         default:
             String(format: "%.2f", finalValue)
         }
+        
+        print("📝 值已更新:")
+        print("  - 整数部分: \(selectedIntegerPart)")
+        print("  - 小数部分: \(selectedDecimalPart)")
+        print("  - 最终值: \(weight)")
     }
     
     private func addTraining() {
@@ -814,7 +841,7 @@ struct TrainingDetailSection: View {
                 
                 // 数值输入
                 WeightInputColumn(
-                    value: Binding(get: { weight }, set: { weight = $0 }),
+                    value: $weight,
                     exercise: exercise,
                     integerPart: $selectedIntegerPart,
                     decimalPart: $selectedDecimalPart
@@ -917,33 +944,139 @@ struct WeightInputColumn: View {
     @Binding var integerPart: Int
     @Binding var decimalPart: Int
     
+    // 添加状态变量来控制加载和初始化
+    @State private var isInitialized = false
+    @State private var isLoading = true
+    @State private var range: [Int] = []
+    
     // 计算整数范围
-    private var integerRange: [Int] {
-        // 如果有最近一次记录，使用60%-110%的范围
-        if let lastRecord = exercise.lastRecord {
+    private func calculateRange() -> [Int] {
+        if let lastRecord = exercise.lastRecord, lastRecord > 0 {
             let baseValue = Int(lastRecord)
             let minValue = max(1, Int(Double(baseValue) * 0.6))
-            let maxValue = Int(Double(baseValue) * 1.1)
+            let maxValue = Int(Double(baseValue) * 1.2)
+            return Array(minValue...maxValue)
+        } else if integerPart > 0 {
+            let minValue = max(1, Int(Double(integerPart) * 0.6))
+            let maxValue = Int(Double(integerPart) * 1.2)
             return Array(minValue...maxValue)
         } else {
-            // 如果没有历史记录，使用默认范围
-            switch exercise.unit {
-            case "次", "组":
-                return Array(1...30)  // 从1开始，不包括0
-            case "kg", "lbs":
-                return Array(1...200)
-            case "km", "mile":
-                return Array(1...30)
-            case "m":
-                return Array(1...200)
-            case "秒":
-                return Array(1...60)
-            case "分钟":
-                return Array(1...60)
-            default:
-                return Array(1...100)
+            return switch exercise.unit {
+            case "kg", "lbs": Array(1...200)
+            case "次", "组": Array(1...30)
+            case "秒", "分钟": Array(1...60)
+            default: Array(1...100)
             }
         }
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: getUnitIcon())
+                    .foregroundColor(.blue)
+                Text(exercise.unit ?? "")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            if isLoading {
+                ProgressView()
+                    .frame(height: 100)
+            } else {
+                HStack(spacing: 2) {
+                    Picker("", selection: $integerPart) {
+                        ForEach(range, id: \.self) { num in
+                            Text("\(num)")
+                                .tag(num)
+                                .monospacedDigit()
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 70, height: 100)
+                    .clipped()
+                    .onChange(of: integerPart) { oldValue, newValue in
+                        if !isLoading {
+                            updateValue()
+                        }
+                    }
+                    
+                    Text(".")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                        .frame(width: 10)
+                    
+                    Picker("", selection: $decimalPart) {
+                        ForEach(decimalParts, id: \.self) { num in
+                            Text(getDecimalText(value: num))
+                                .tag(num)
+                                .monospacedDigit()
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 50, height: 100)
+                    .clipped()
+                    .onChange(of: decimalPart) { oldValue, newValue in
+                        if !isLoading {
+                            updateValue()
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            // 延迟初始化，等待数据加载完成
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                range = calculateRange()
+                
+                if let lastRecord = exercise.lastRecord, lastRecord > 0, !isInitialized {
+                    integerPart = Int(lastRecord)
+                    isInitialized = true
+                    updateValue()
+                }
+                
+                isLoading = false
+            }
+        }
+    }
+    
+    // 根据单位类型返回对应图标
+    private func getUnitIcon() -> String {
+        switch exercise.unit {
+        case "kg", "lbs": return "scalemass.fill"
+        case "次", "组": return "number.circle.fill"
+        case "秒": return "stopwatch.fill"
+        case "分钟": return "clock.fill"
+        case "m", "km", "mile": return "ruler.fill"
+        default: return "number.circle.fill"
+        }
+    }
+    
+    // 添加更新值的方法
+    private func updateValue() {
+        print("💡 更新输入值:")
+        print("  - 整数部分: \(integerPart)")
+        print("  - 小数部分: \(decimalPart)")
+        
+        let finalValue = switch exercise.unit {
+        case "次", "组":
+            Double(integerPart) + (decimalPart == 5 ? 0.5 : 0.0)
+        case "秒":
+            Double(integerPart) + Double(decimalPart) / 10.0
+        case "分钟":
+            Double(integerPart) + Double(decimalPart) / 60.0
+        default:
+            Double(integerPart) + Double(decimalPart) / 100.0
+        }
+        
+        value = switch exercise.unit {
+        case "次", "组", "秒":
+            String(format: "%.1f", finalValue)
+        default:
+            String(format: "%.2f", finalValue)
+        }
+        
+        print("  - 最终值: \(value)")
     }
     
     // 计算小数部分选项
@@ -966,7 +1099,7 @@ struct WeightInputColumn: View {
         }
     }
     
-    private func getDecimalText(_ value: Int) -> String {
+    private func getDecimalText(value: Int) -> String {
         switch exercise.unit {
         case "次", "组":
             // 次数和组数显示一位小数 (x.0 或 x.5)
@@ -982,59 +1115,6 @@ struct WeightInputColumn: View {
             return value == 0 ? "00" : String(format: "%02d", value)
         default:
             return "0"
-        }
-    }
-    
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: getUnitIcon())
-                    .foregroundColor(.blue)
-                Text(exercise.unit ?? "")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            HStack(spacing: 2) {
-                Picker("", selection: $integerPart) {
-                    ForEach(integerRange, id: \.self) { num in
-                        Text("\(num)")
-                            .tag(num)
-                            .monospacedDigit()
-                    }
-                }
-                .pickerStyle(.wheel)
-                .frame(width: 70, height: 100)
-                .clipped()
-                
-                Text(".")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-                    .frame(width: 10)
-                
-                Picker("", selection: $decimalPart) {
-                    ForEach(decimalParts, id: \.self) { num in
-                        Text(getDecimalText(num))
-                            .tag(num)
-                            .monospacedDigit()
-                    }
-                }
-                .pickerStyle(.wheel)
-                .frame(width: 50, height: 100)
-                .clipped()
-            }
-        }
-    }
-    
-    // 根据单位类型返回对应图标
-    private func getUnitIcon() -> String {
-        switch exercise.unit {
-        case "kg", "lbs": return "scalemass.fill"
-        case "次", "组": return "number.circle.fill"
-        case "秒": return "stopwatch.fill"
-        case "分钟": return "clock.fill"
-        case "m", "km", "mile": return "ruler.fill"
-        default: return "number.circle.fill"
         }
     }
 }

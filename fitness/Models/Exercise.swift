@@ -11,6 +11,7 @@ struct Exercise: Identifiable, Codable, Hashable {
     let createdAt: Date
     let updatedAt: Date
     var maxRecord: Double?
+    var lastRecord: Double?
     var lastRecordDate: Date?
     
     // 实现 Hashable
