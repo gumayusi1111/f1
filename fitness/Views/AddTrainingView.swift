@@ -38,6 +38,10 @@ struct AddTrainingView: View {
     // 在 WeightInputColumn 中添加 UserDefaults key
     private let lastTrainingValueKey = "lastTrainingValue_" // 将跟随运动ID存储
     
+    // 添加动画相关状态
+    @State private var isCompleting = false
+    @State private var showSuccessOverlay = false
+    
     init(date: Date, onTrainingAdded: @escaping () -> Void) {
         self.date = date
         self.onTrainingAdded = onTrainingAdded
@@ -216,10 +220,14 @@ struct AddTrainingView: View {
                 
                 // 完成按钮
                 Button(action: addTraining) {
-                    if isLoading {
-                        ProgressView().tint(.white)
-                    } else {
-                        Text("完成").fontWeight(.semibold)
+                    HStack {
+                        if isLoading {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("完成")
+                                .fontWeight(.semibold)
+                                .scaleEffect(isCompleting ? 0.9 : 1)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -232,7 +240,33 @@ struct AddTrainingView: View {
                 .cornerRadius(12)
                 .padding()
                 .disabled(selectedExercise == nil || weight.isEmpty || isLoading)
+                .scaleEffect(isCompleting ? 0.95 : 1)
+                .animation(.spring(response: 0.3), value: isCompleting)
             }
+            .overlay {
+                if showSuccessOverlay {
+                    // 成功提示遮罩
+                    VStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.green)
+                            .transition(.scale.combined(with: .opacity))
+                        
+                        Text("训练已添加")
+                            .font(.title3)
+                            .foregroundColor(.primary)
+                            .padding(.top, 8)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.2))
+                    .transition(.opacity)
+                }
+            }
+            // 添加页面过渡动画
+            .transition(.asymmetric(
+                insertion: .move(edge: .bottom).combined(with: .opacity),
+                removal: .move(edge: .bottom).combined(with: .opacity)
+            ))
             .navigationTitle("添加训练")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(trailing: Button("取消") { dismiss() })
@@ -423,6 +457,11 @@ struct AddTrainingView: View {
               let weightValue = Double(weight),
               !exercise.name.isEmpty else { return }
         
+        // 开始完成动画
+        withAnimation(.spring(response: 0.3)) {
+            isCompleting = true
+        }
+        
         isLoading = true
         let db = Firestore.firestore()
         
@@ -446,11 +485,30 @@ struct AddTrainingView: View {
                 if let error = error {
                     errorMessage = "添加失败: \(error.localizedDescription)"
                     showError = true
+                    // 重置动画状态
+                    withAnimation(.spring(response: 0.3)) {
+                        isCompleting = false
+                    }
                 } else {
                     // 保存本次训练的值
                     UserDefaults.standard.set(weightValue, forKey: "lastTrainingValue_" + exercise.id)
-                    onTrainingAdded()
-                    dismiss()
+                    
+                    // 显示成功动画
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
+                        showSuccessOverlay = true
+                    }
+                    
+                    // 播放触觉反馈
+                    let generator = UINotificationFeedbackGenerator()
+                    generator.notificationOccurred(.success)
+                    
+                    // 延迟关闭页面
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        onTrainingAdded()
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            dismiss()
+                        }
+                    }
                 }
             }
     }

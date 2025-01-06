@@ -20,6 +20,9 @@ struct DayTrainingView: View {
     @State private var selectedRecord: TrainingRecord? = nil
     @State private var trainings: [TrainingRecord] = []
     
+    @State private var showDeleteSuccess = false
+    @State private var deletedRecordName = ""
+    
     let bodyParts = ["胸部", "背部", "腿部", "肩部", "手臂", "核心"]
     
     // 添加缓存键
@@ -176,6 +179,23 @@ struct DayTrainingView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
+                
+                if showDeleteSuccess {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("\(deletedRecordName) 已删除")
+                                .foregroundColor(.white)
+                        }
+                        .padding()
+                        .background(Color.black.opacity(0.7))
+                        .cornerRadius(10)
+                        .padding(.bottom, 50)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
             }
             .alert("设置失败", isPresented: $showErrorAlert) {
                 Button("确定", role: .cancel) { }
@@ -190,7 +210,7 @@ struct DayTrainingView: View {
                     }
                 }
             } message: {
-                Text("确定要删除这条训练记录吗？")
+                Text(selectedRecord?.type != nil ? "确定要删除「\(selectedRecord!.type)」的训练记录吗？" : "")
             }
         }
     }
@@ -373,17 +393,33 @@ struct DayTrainingView: View {
     }
     
     private func deleteTraining(_ record: TrainingRecord) {
+        isLoading = true
         let db = Firestore.firestore()
+        deletedRecordName = record.type
+        
         db.collection("users")
             .document(userId)
             .collection("trainings")
             .document(record.id)
             .delete { error in
+                isLoading = false
+                
                 if let error = error {
-                    print("删除失败: \(error.localizedDescription)")
+                    errorMessage = "删除失败: \(error.localizedDescription)"
+                    showErrorAlert = true
                 } else {
                     if let index = trainings.firstIndex(where: { $0.id == record.id }) {
                         trainings.remove(at: index)
+                    }
+                    showDeleteSuccess = true
+                    
+                    // 播放触觉反馈
+                    let generator = UINotificationFeedbackGenerator()
+                    generator.notificationOccurred(.success)
+                    
+                    // 2秒后隐藏成功提示
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        showDeleteSuccess = false
                     }
                 }
             }
