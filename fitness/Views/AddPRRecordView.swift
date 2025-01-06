@@ -19,6 +19,10 @@ struct AddPRRecordView: View {
     @State private var deletedRecordId: String?
     @State private var selectedIntegerPart: Int = 0
     @State private var selectedDecimalPart: Int = 0 // 0=0.00, 1=0.25, 2=0.50, 3=0.75
+    @State private var currentPage = 0
+    @State private var recordsPerPage = 8
+    @State private var pageTransition: Double = 0 // 控制翻页动画方向
+    @State private var expandTransition: Bool = false // 控制展开/收起动画
     var onRecordUpdate: (() -> Void)?
     
     // 修改滚轮选择器的范围计算
@@ -231,8 +235,12 @@ struct AddPRRecordView: View {
                             Spacer()
                             if !records.isEmpty {
                                 Button(action: {
-                                    withAnimation(.spring(response: 0.3)) {
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                        expandTransition.toggle()
                                         isHistoryExpanded.toggle()
+                                        if !isHistoryExpanded {
+                                            currentPage = 0
+                                        }
                                     }
                                 }) {
                                     HStack(spacing: 4) {
@@ -242,6 +250,7 @@ struct AddPRRecordView: View {
                                         Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
                                             .font(.system(size: 12))
                                             .foregroundColor(.blue)
+                                            .rotationEffect(.degrees(expandTransition ? 180 : 0))
                                     }
                                 }
                             }
@@ -258,24 +267,74 @@ struct AddPRRecordView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 40)
-                        } else {
-                            LazyVStack(spacing: 12) {
-                                ForEach(isHistoryExpanded ? records : Array(records.prefix(3))) { record in
-                                    RecordRow(
-                                        record: record,
-                                        unit: exercise.unit ?? "",
-                                        onDelete: {
-                                            recordToDelete = record
-                                            showingDeleteAlert = true
-                                        },
-                                        isDeleting: record.id == deletedRecordId
-                                    )
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .leading).combined(with: .opacity),
-                                        removal: .move(edge: .trailing).combined(with: .opacity)
-                                    ))
+                        } else if isHistoryExpanded {
+                            VStack(spacing: 12) {
+                                let startIndex = currentPage * recordsPerPage
+                                let endIndex = min(startIndex + recordsPerPage, records.count)
+                                let displayedRecords = Array(records[startIndex..<endIndex])
+                                
+                                // 记录列表容器
+                                VStack(spacing: 12) {
+                                    ForEach(displayedRecords) { record in
+                                        RecordRow(
+                                            record: record,
+                                            unit: exercise.unit ?? "",
+                                            onDelete: {
+                                                recordToDelete = record
+                                                showingDeleteAlert = true
+                                            },
+                                            isDeleting: record.id == deletedRecordId
+                                        )
+                                        .transition(.asymmetric(
+                                            insertion: .move(edge: pageTransition > 0 ? .trailing : .leading)
+                                                .combined(with: .opacity),
+                                            removal: .move(edge: pageTransition > 0 ? .leading : .trailing)
+                                                .combined(with: .opacity)
+                                        ))
+                                    }
+                                }
+                                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentPage)
+                                
+                                // 分页控制
+                                if records.count > recordsPerPage {
+                                    HStack(spacing: 20) {
+                                        Button(action: {
+                                            pageTransition = -1
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                                currentPage = max(0, currentPage - 1)
+                                            }
+                                        }) {
+                                            Image(systemName: "chevron.left")
+                                                .font(.system(size: 16, weight: .semibold))
+                                        }
+                                        .disabled(currentPage == 0)
+                                        .opacity(currentPage == 0 ? 0.5 : 1)
+                                        
+                                        Text("\(currentPage + 1) / \(Int(ceil(Double(records.count) / Double(recordsPerPage))))")
+                                            .font(.subheadline)
+                                            .transition(.opacity)
+                                        
+                                        Button(action: {
+                                            pageTransition = 1
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                                currentPage = min(currentPage + 1, (records.count - 1) / recordsPerPage)
+                                            }
+                                        }) {
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 16, weight: .semibold))
+                                        }
+                                        .disabled(currentPage >= (records.count - 1) / recordsPerPage)
+                                        .opacity(currentPage >= (records.count - 1) / recordsPerPage ? 0.5 : 1)
+                                    }
+                                    .foregroundColor(.blue)
+                                    .padding(.top, 8)
+                                    .frame(maxWidth: .infinity)
                                 }
                             }
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .top).combined(with: .opacity),
+                                removal: .move(edge: .bottom).combined(with: .opacity)
+                            ))
                         }
                     }
                     .alert("确认删除", isPresented: $showingDeleteAlert) {
