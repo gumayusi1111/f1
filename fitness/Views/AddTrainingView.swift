@@ -29,7 +29,13 @@ struct AddTrainingView: View {
     init(date: Date, onTrainingAdded: @escaping () -> Void) {
         self.date = date
         self.onTrainingAdded = onTrainingAdded
+        
+        // 如果有今日训练部位,则使用它;否则默认显示"全部"
         _selectedBodyPart = State(initialValue: todayTrainingPart.isEmpty ? "全部" : todayTrainingPart)
+        
+        // 打印日志便于调试
+        print("📅 初始化训练视图 - 日期: \(date)")
+        print("💪 今日训练部位: \(todayTrainingPart.isEmpty ? "未设置" : todayTrainingPart)")
     }
     
     private var filteredExercises: [Exercise] {
@@ -191,6 +197,13 @@ struct AddTrainingView: View {
                 prepareHaptics()
                 loadExercises()
                 loadTodayRecords()
+                
+                // 如果有今日训练部位,自动滚动到对应分类
+                if !todayTrainingPart.isEmpty {
+                    withAnimation {
+                        selectedBodyPart = todayTrainingPart
+                    }
+                }
             }
             .alert("错误", isPresented: $showError) {
                 Button("确定", role: .cancel) { }
