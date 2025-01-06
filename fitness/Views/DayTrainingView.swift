@@ -23,6 +23,12 @@ struct DayTrainingView: View {
     @State private var showDeleteSuccess = false
     @State private var deletedRecordName = ""
     
+    // 添加分页相关状态
+    @State private var currentPage = 1
+    private let pageSize = 8
+    @State private var hasMorePages = false
+    @State private var isLoadingMore = false
+    
     let bodyParts = ["胸部", "背部", "腿部", "肩部", "手臂", "核心"]
     
     // 添加缓存键
@@ -101,7 +107,7 @@ struct DayTrainingView: View {
                 // 训练记录列表
                 if !trainings.isEmpty {
                     List {
-                        ForEach(trainings) { record in
+                        ForEach(pagedTrainings) { record in
                             TrainingRecordRow(record: record)
                                 .swipeActions(edge: .trailing) {
                                     Button(role: .destructive) {
@@ -111,13 +117,32 @@ struct DayTrainingView: View {
                                         Label("删除", systemImage: "trash")
                                     }
                                 }
-                                .listRowInsets(EdgeInsets())
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets())  // 移除默认边距
+                                .listRowSeparator(.hidden)    // 隐藏分隔线
+                                .listRowBackground(Color.clear) // 透明背景
                         }
                     }
                     .listStyle(.plain)
-                    .padding(.vertical)
+                    .scrollContentBackground(.hidden) // iOS 16+ 隐藏列表背景
+                    
+                    // 加载更多按钮
+                    if hasMorePages && !isLoadingMore {
+                        Button(action: loadMoreRecords) {
+                            HStack {
+                                Text("加载更多")
+                                    .font(.system(size: 15))
+                                Image(systemName: "arrow.down.circle")
+                            }
+                            .foregroundColor(.blue)
+                            .padding()
+                        }
+                    }
+                    
+                    // 加载指示器
+                    if isLoadingMore {
+                        ProgressView()
+                            .padding()
+                    }
                 } else if !selectedBodyPart.isEmpty {
                     // 显示空状态
                     VStack(spacing: 12) {
@@ -432,16 +457,14 @@ struct DayTrainingView: View {
         let startOfDay = calendar.startOfDay(for: date)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
         
-        print("\n========== 开始加载训练记录 ==========")
-        print("📅 查询日期范围:")
-        print("开始时间: \(startOfDay)")
-        print("结束时间: \(endOfDay)")
-        
         db.collection("users")
             .document(userId)
             .collection("trainings")
             .whereField("date", isGreaterThanOrEqualTo: startOfDay)
             .whereField("date", isLessThan: endOfDay)
+            .order(by: "date", descending: false)
+            .order(by: "createdAt", descending: true)
+            .order(by: "__name__", descending: false)
             .addSnapshotListener { snapshot, error in
                 if let error = error {
                     print("❌ 加载失败: \(error.localizedDescription)")
@@ -498,11 +521,43 @@ struct DayTrainingView: View {
                         date: (data["date"] as? Timestamp)?.dateValue() ?? Date(),
                         createdAt: createdAt
                     )
-                }
+                }.sorted { $0.createdAt > $1.createdAt }  // 在内存中排序
                 
                 print("\n✅ 成功加载 \(self.trainings.count) 条训练记录")
                 print("========== 加载完成 ==========\n")
+                
+                // 重置分页状态
+                currentPage = 1
+                updateHasMorePages()
             }
+    }
+    
+    // 计算当前页要显示的记录
+    private var pagedTrainings: [TrainingRecord] {
+        // 按创建时间降序排序
+        let sortedTrainings = trainings.sorted { $0.createdAt > $1.createdAt }
+        let startIndex = 0
+        let endIndex = min(currentPage * pageSize, sortedTrainings.count)
+        return Array(sortedTrainings[startIndex..<endIndex])
+    }
+    
+    // 添加加载更多记录的函数
+    private func loadMoreRecords() {
+        guard hasMorePages else { return }
+        
+        isLoadingMore = true
+        currentPage += 1
+        
+        // 模拟网络延迟
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            isLoadingMore = false
+            updateHasMorePages()
+        }
+    }
+    
+    // 更新是否还有更多页的状态
+    private func updateHasMorePages() {
+        hasMorePages = trainings.count > currentPage * pageSize
     }
 }
 
