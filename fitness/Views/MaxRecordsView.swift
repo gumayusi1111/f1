@@ -222,7 +222,6 @@ struct MaxRecordsView: View {
         
         if !canRefresh() {
             showRefreshLimitAlert = true
-            // 添加这一行来确保刷新状态重置
             isRefreshing = false
             return
         }
@@ -233,29 +232,46 @@ struct MaxRecordsView: View {
         isRefreshing = true
         
         do {
-            // 添加清理函数调用（只需要运行一次）
-            await cleanupDuplicateSystemExercises()
-            
-            // 继续原有的刷新逻辑
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    try await loadExercises()
+            // 1. 优先刷新有记录的项目
+            let priorityRecords = recentPRs.filter { $0.maxRecord != nil }
+            if !priorityRecords.isEmpty {
+                print("🔄 优先刷新 \(priorityRecords.count) 个有记录的项目")
+                
+                // 只刷新第一页的有记录项目
+                let firstPageCount = min(pageSize, priorityRecords.count)
+                let priorityFirstPage = Array(priorityRecords[0..<firstPageCount])
+                
+                // 异步更新这些记录
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for exercise in priorityFirstPage {
+                        group.addTask {
+                            try await updateExerciseRecord(exercise)
+                        }
+                    }
+                    try await group.waitForAll()
                 }
                 
-                group.addTask {
-                    try await loadRecentPRs()
+                // 立即更新UI显示第一页的更新结果
+                DispatchQueue.main.async {
+                    currentPage = 1 // 确保显示第一页
+                    // 触发 filteredPRs 重新计算
+                    self.recentPRs = self.recentPRs
                 }
-                
-                try await group.waitForAll()
             }
             
-            // 更新刷新时间
-            updateLastRefreshTime()
-            lastSyncDate = Date()
-            updateLastSyncTime()
-            
-            print("✅ 数据刷新成功")
-            print("📅 最后同步时间: \(lastSyncTimeString)")
+            // 2. 后台继续加载其他数据
+            Task {
+                try await loadExercises()
+                try await loadRecentPRs()
+                
+                // 更新刷新时间和同步状态
+                updateLastRefreshTime()
+                lastSyncDate = Date()
+                updateLastSyncTime()
+                
+                print("✅ 数据刷新成功")
+                print("📅 最后同步时间: \(lastSyncTimeString)")
+            }
             
         } catch {
             print("❌ 刷新失败: \(error.localizedDescription)")
@@ -267,6 +283,65 @@ struct MaxRecordsView: View {
         }
         
         print("========== 刷新结束 ==========\n")
+    }
+    
+    @MainActor
+    private func updateExerciseRecord(_ exercise: Exercise) async throws {
+        print("\n========== 开始更新运动记录 ==========")
+        print("📝 运动项目: \(exercise.name)")
+        print("📝 当前最大记录: \(exercise.maxRecord ?? 0)")
+        
+        let db = Firestore.firestore()
+        let docRef = db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .document(exercise.id)
+        
+        // 获取运动记录
+        let recordsRef = docRef.collection("records")
+        let records = try await recordsRef.order(by: "value", descending: true).limit(to: 1).getDocuments()
+        
+        print("📝 查询到的记录数: \(records.documents.count)")
+        
+        if let record = records.documents.first,
+           let value = record.data()["value"] as? Double {
+            print("📝 找到最大记录: \(value)")
+            
+            // 1. 更新 Firestore
+            let data: [String: Any] = [
+                "maxRecord": value,
+                "updatedAt": FieldValue.serverTimestamp()
+            ]
+            try await docRef.updateData(data)
+            print("✅ Firestore 更新成功")
+            
+            // 2. 更新本地数据
+            if let index = self.recentPRs.firstIndex(where: { $0.id == exercise.id }) {
+                print("📝 更新本地数据 index: \(index)")
+                let updatedExercise = Exercise(
+                    id: exercise.id,
+                    name: exercise.name,
+                    category: exercise.category,
+                    description: exercise.description,
+                    notes: exercise.notes,
+                    isSystemPreset: exercise.isSystemPreset,
+                    unit: exercise.unit,
+                    createdAt: exercise.createdAt,
+                    updatedAt: Date(),
+                    maxRecord: value,
+                    lastRecordDate: exercise.lastRecordDate
+                )
+                
+                // 3. 强制刷新整个数组
+                var newPRs = self.recentPRs
+                newPRs[index] = updatedExercise
+                self.recentPRs = newPRs
+                
+                print("📝 本地数据更新完成，新记录: \(value)")
+            }
+        }
+        
+        print("========== 更新完成 ==========\n")
     }
     
     var body: some View {
@@ -555,7 +630,7 @@ struct MaxRecordsView: View {
             return matchesSearch && matchesCategory
         }
         
-        // 2. 按照是否有记录排序
+        // 2. 按照记录排序
         return filtered.sorted { first, second in
             // 如果第一个有记录而第二个没有，第一个排在前面
             if first.maxRecord != nil && second.maxRecord == nil {
@@ -565,10 +640,24 @@ struct MaxRecordsView: View {
             if first.maxRecord == nil && second.maxRecord != nil {
                 return false
             }
-            // 如果都有记录，按最近记录时间排序
-            if let firstDate = first.lastRecordDate, let secondDate = second.lastRecordDate {
-                return firstDate > secondDate
+            // 如果都有记录，根据运动类型比较
+            if let firstRecord = first.maxRecord,
+               let secondRecord = second.maxRecord {
+                
+                // 核心类别的时间越长越好
+                if first.category == "核心" && second.category == "核心" {
+                    return firstRecord > secondRecord
+                }
+                
+                // 有氧类别（除了核心）时间越短越好
+                if first.category == "有氧" && second.category == "有氧" {
+                    return firstRecord < secondRecord
+                }
+                
+                // 其他类别（重量、次数等）越大越好
+                return firstRecord > secondRecord
             }
+            
             // 如果都没有记录，按名称排序
             return first.name < second.name
         }
