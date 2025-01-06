@@ -300,82 +300,85 @@ struct AddExerciseView: View {
                 }
             }
             
-            isLoading = true
-            print("\n========== 开始保存训练项目 ==========")
-            print("📝 项目名称: \(name)")
-            print("📑 类别: \(selectedCategory ?? "未选择")")
-            print("📏 单位: \(selectedUnit ?? "未选择")")
-            
-            let exercise = Exercise(
-                id: UUID().uuidString,
-                name: name,
-                category: selectedCategory!,
-                description: description,
-                notes: notes,
-                isSystemPreset: false,
-                unit: selectedUnit,
-                createdAt: Date(),
-                updatedAt: Date(),
-                maxRecord: nil,
-                lastRecordDate: nil
-            )
-            
-            // 保存到 Firestore
-            let db = Firestore.firestore()
-            guard !userId.isEmpty else {
-                showError = true
-                errorMessage = "用户ID不存在"
-                isLoading = false
-                print("❌ 保存失败: 用户ID不存在")
-                return
-            }
-            
-            print("🔄 正在保存到 Firestore...")
-            
-            db.collection("users")
-                .document(userId)
-                .collection("exercises")
-                .document(exercise.id)
-                .setData(exercise.dictionary) { error in
-                    if let error = error {
-                        showError = true
-                        errorMessage = "保存失败: \(error.localizedDescription)"
-                        isLoading = false
-                        print("❌ 保存失败: \(error.localizedDescription)")
-                    } else {
-                        // 1. 触觉反馈
-                        let notificationGenerator = UINotificationFeedbackGenerator()
-                        notificationGenerator.prepare() // 提前准备减少延迟
-                        notificationGenerator.notificationOccurred(.success)
-                        
-                        // 2. 播放系统音效
-                        AudioServicesPlaySystemSound(1004) // 使用系统提示音
-                        
-                        // 3. 显示成功动画
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                            showSuccessToast = true
-                            showSaveAnimation = true
-                        }
-                        
-                        onExerciseAdded(exercise)
-                        
-                        // 使用 Task 和 await 替代 DispatchQueue
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5秒
-                            
-                            withAnimation {
-                                showSuccessToast = false
-                                showSaveAnimation = false
-                            }
-                            
-                            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3秒
-                            isLoading = false
-                            dismiss()
-                        }
+            Task {
+                isLoading = true
+                print("\n========== 开始保存训练项目 ==========")
+                print("📝 项目名称: \(name)")
+                print("📑 类别: \(selectedCategory ?? "未选择")")
+                print("📏 单位: \(selectedUnit ?? "未选择")")
+                
+                let exercise = Exercise(
+                    id: UUID().uuidString,
+                    name: name,
+                    category: selectedCategory!,
+                    description: description,
+                    notes: notes,
+                    isSystemPreset: false,
+                    unit: selectedUnit,
+                    createdAt: Date(),
+                    updatedAt: Date(),
+                    maxRecord: nil,
+                    lastRecordDate: nil
+                )
+                
+                // 保存到 Firestore
+                let db = Firestore.firestore()
+                guard !userId.isEmpty else {
+                    showError = true
+                    errorMessage = "用户ID不存在"
+                    isLoading = false
+                    print("❌ 保存失败: 用户ID不存在")
+                    return
+                }
+                
+                print("🔄 正在保存到 Firestore...")
+                
+                do {
+                    try await db.collection("users")
+                        .document(userId)
+                        .collection("exercises")
+                        .document(exercise.id)
+                        .setData(exercise.dictionary)
+                    
+                    // 1. 触觉反馈
+                    let notificationGenerator = UINotificationFeedbackGenerator()
+                    notificationGenerator.prepare()
+                    notificationGenerator.notificationOccurred(.success)
+                    
+                    // 2. 播放系统音效
+                    AudioServicesPlaySystemSound(1004)
+                    
+                    // 3. 显示成功动画
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                        showSuccessToast = true
+                        showSaveAnimation = true
                     }
                     
+                    onExerciseAdded(exercise)
+                    
+                    // 延迟关闭动画和视图
+                    try await Task.sleep(for: .seconds(1.5))
+                    
+                    withAnimation {
+                        showSuccessToast = false
+                        showSaveAnimation = false
+                    }
+                    
+                    try await Task.sleep(for: .seconds(0.3))
+                    isLoading = false
+                    dismiss()
+                    
+                    print("✅ 保存成功")
                     print("========== 保存结束 ==========\n")
+                    
+                } catch {
+                    showError = true
+                    errorMessage = "保存失败: \(error.localizedDescription)"
+                    isLoading = false
+                    print("❌ 保存失败: \(error.localizedDescription)")
+                    print("========== 保存失败 ==========\n")
                 }
+            }
         }
     }
     
