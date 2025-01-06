@@ -519,7 +519,8 @@ struct DayTrainingView: View {
                         weight: data["weight"] as? Double ?? 0,
                         notes: data["notes"] as? String ?? "",
                         date: (data["date"] as? Timestamp)?.dateValue() ?? Date(),
-                        createdAt: createdAt
+                        createdAt: createdAt,
+                        unit: data["unit"] as? String
                     )
                 }.sorted { $0.createdAt > $1.createdAt }  // 在内存中排序
                 
@@ -595,7 +596,7 @@ struct TrainingRecordRow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "scalemass.fill")
                         .foregroundColor(.blue)
-                    Text(String(format: "%.1f kg", record.weight))
+                    Text(String(format: "%.1f %@", record.weight, record.unit ?? "kg"))
                 }
                 .font(.system(size: 15))
             }

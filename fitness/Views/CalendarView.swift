@@ -293,7 +293,8 @@ struct CalendarView: View {
                             weight: weight,
                             notes: notes,
                             date: date,
-                            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+                            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                            unit: data["unit"] as? String
                         )
                         
                         let dateString = dateFormatter.string(from: date)

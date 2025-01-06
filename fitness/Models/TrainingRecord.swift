@@ -10,4 +10,5 @@ struct TrainingRecord: Identifiable, Codable {
     let notes: String
     let date: Date
     let createdAt: Date
+    let unit: String?
 } 

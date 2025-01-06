@@ -472,9 +472,10 @@ struct AddTrainingView: View {
             "reps": reps,
             "weight": weightValue,
             "notes": notes,
-            "date": date,  // 保留日期用于查询
-            "createdAt": FieldValue.serverTimestamp(),  // 使用服务器时间戳
-            "userId": userId
+            "date": date,
+            "createdAt": FieldValue.serverTimestamp(),
+            "userId": userId,
+            "unit": exercise.unit ?? "kg"  // 提供默认值
         ]
         
         db.collection("users")
