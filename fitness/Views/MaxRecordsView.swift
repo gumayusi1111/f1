@@ -639,21 +639,20 @@ struct MaxRecordsView: View {
     private func loadRecentPRs() async throws {
         print("📱 开始加载PR记录...")
         
-        // 1. 先尝试从缓存加载
+        // 1. 先尝试从缓存加载 (保持不变)
         if let cached = loadPRsFromCache() {
             await MainActor.run {
                 self.recentPRs = cached
-                self.isFirstLoading = false  // 确保关闭骨架屏
+                self.isFirstLoading = false
             }
             print("✅ 从缓存加载了 \(cached.count) 条PR记录")
             
-            // 如果不是在刷新状态，就直接返回
             if !isRefreshing {
                 return
             }
         }
         
-        // 2. 检查网络状态
+        // 2. 检查网络状态 (保持不变)
         guard connectivityManager.isOnline else {
             print("⚠️ 离线状态，使用缓存数据")
             await MainActor.run {
@@ -666,55 +665,65 @@ struct MaxRecordsView: View {
         
         return try await withCheckedThrowingContinuation { continuation in
             let db = Firestore.firestore()
+            
+            // 3. 修改这里：同时获取系统预设和用户项目
+            let group = DispatchGroup()
+            var allRecords: [Exercise] = []
+            var loadError: Error?
+            
+            // 加载系统预设
+            group.enter()
+            db.collection("systemExercises").getDocuments { snapshot, error in
+                if let error = error {
+                    loadError = error
+                } else if let documents = snapshot?.documents {
+                    let systemExercises = documents.compactMap { doc in
+                        try? doc.data(as: Exercise.self)
+                    }
+                    allRecords.append(contentsOf: systemExercises)
+                }
+                group.leave()
+            }
+            
+            // 加载用户项目
+            group.enter()
             db.collection("users")
                 .document(userId)
                 .collection("exercises")
-                .order(by: "updatedAt", descending: true)
-                .getDocuments { [self] snapshot, error in
+                .getDocuments { snapshot, error in
                     if let error = error {
-                        print("❌ 加载PR记录失败: \(error.localizedDescription)")
-                        Task { @MainActor in
-                            self.isFirstLoading = false
+                        loadError = error
+                    } else if let documents = snapshot?.documents {
+                        let userExercises = documents.compactMap { doc in
+                            try? doc.data(as: Exercise.self)
                         }
-                        continuation.resume(throwing: error)
-                        return
+                        allRecords.append(contentsOf: userExercises)
                     }
-                    
-                    if let documents = snapshot?.documents {
-                        var records = documents.compactMap { document in
-                            try? document.data(as: Exercise.self)
-                        }
-                        
-                        // 确保缓存的数据是最新的
-                        records = records.map { exercise in
-                            var updatedExercise = exercise
-                            if let index = self.recentPRs.firstIndex(where: { $0.id == exercise.id }) {
-                                updatedExercise.maxRecord = self.recentPRs[index].maxRecord
-                                updatedExercise.lastRecordDate = self.recentPRs[index].lastRecordDate
-                            }
-                            return updatedExercise
-                        }
-                        
-                        Task { @MainActor in
-                            withAnimation {
-                                self.recentPRs = records
-                                self.isFirstLoading = false  // 确保关闭骨架屏
-                            }
-                        }
-                        
-                        // 保存到缓存
-                        self.savePRsToCache(records)
-                        
-                        print("✅ 成功加载 \(records.count) 条PR记录")
-                        continuation.resume(returning: ())
-                    } else {
-                        print("⚠️ 没有找到记录")
-                        Task { @MainActor in
-                            self.isFirstLoading = false  // 确保关闭骨架屏
-                        }
-                        continuation.resume(returning: ())
+                    group.leave()
+                }
+            
+            // 处理结果
+            group.notify(queue: .main) {
+                if let error = loadError {
+                    print("❌ 加载PR记录失败: \(error.localizedDescription)")
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                // 更新UI和缓存
+                Task { @MainActor in
+                    withAnimation {
+                        self.recentPRs = allRecords
+                        self.isFirstLoading = false
                     }
                 }
+                
+                // 保存到缓存
+                self.savePRsToCache(allRecords)
+                
+                print("✅ 成功加载 \(allRecords.count) 条PR记录")
+                continuation.resume(returning: ())
+            }
         }
     }
     
