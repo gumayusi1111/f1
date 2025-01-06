@@ -35,6 +35,9 @@ struct AddTrainingView: View {
     private let exercisesCacheTimeKey = "exercisesCacheTime"
     private let cacheValidDuration: TimeInterval = 24 * 60 * 60 // 24小时
     
+    // 在 WeightInputColumn 中添加 UserDefaults key
+    private let lastTrainingValueKey = "lastTrainingValue_" // 将跟随运动ID存储
+    
     init(date: Date, onTrainingAdded: @escaping () -> Void) {
         self.date = date
         self.onTrainingAdded = onTrainingAdded
@@ -444,6 +447,8 @@ struct AddTrainingView: View {
                     errorMessage = "添加失败: \(error.localizedDescription)"
                     showError = true
                 } else {
+                    // 保存本次训练的值
+                    UserDefaults.standard.set(weightValue, forKey: "lastTrainingValue_" + exercise.id)
                     onTrainingAdded()
                     dismiss()
                 }
@@ -821,43 +826,52 @@ struct WeightInputColumn: View {
     @State private var isInitialized = false
     @State private var isLoading = true
     @State private var range: [Int] = []
-    @State private var lastRecordValue: Double? = nil  // 添加这个状态来跟踪历史记录
     
-    // 添加一个新的方法来处理记录更新
-    private func handleRecordUpdate(_ newRecord: Double) {
-        print("\n🔄 处理记录更新 - \(exercise.name):")
-        print("  - 新记录: \(newRecord)")
+    private func initializeValues() {
+        print("\n📊 初始化值 - \(exercise.name):")
         
-        // 计算新范围
-        let baseValue = Int(newRecord)
-        let minValue = max(1, Int(Double(baseValue) * 0.6))
-        let maxValue = Int(Double(baseValue) * 1.5)
-        let newRange = Array(minValue...maxValue)
+        // 获取上次训练值
+        let lastValue = UserDefaults.standard.double(forKey: "lastTrainingValue_" + exercise.id)
         
-        print("📏 新范围计算:")
-        print("  - 基准值: \(baseValue)")
-        print("  - 最小值: \(minValue)")
-        print("  - 最大值: \(maxValue)")
+        // 设置范围
+        let defaultRange: [Int]
+        if lastValue > 0 {
+            // 如果有上次记录,使用 50%-150% 范围
+            let baseValue = Int(lastValue)
+            let minValue = max(1, Int(Double(baseValue) * 0.5))
+            let maxValue = Int(Double(baseValue) * 1.5)
+            defaultRange = Array(minValue...maxValue)
+        } else {
+            // 否则使用默认范围
+            defaultRange = switch exercise.unit {
+            case "kg", "lbs": Array(1...200)
+            case "次", "组": Array(1...30)
+            case "秒": Array(1...60)
+            case "分钟": Array(1...60)
+            case "m": Array(1...200)
+            case "km", "mile": Array(1...30)
+            default: Array(1...100)
+            }
+        }
         
-        // 在主线程上更新 UI
         DispatchQueue.main.async {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                // 更新所有状态
-                self.range = newRange
-                self.integerPart = baseValue
-                self.decimalPart = self.findClosestDecimalPart(
-                    Int((newRecord.truncatingRemainder(dividingBy: 1)) * 100)
-                )
-                self.lastRecordValue = newRecord
+                self.range = defaultRange
+                // 如果有上次记录,使用上次的值作为初始值
+                self.integerPart = lastValue > 0 ? Int(lastValue) : defaultRange[0]
+                self.decimalPart = lastValue > 0 ? 
+                    Int((lastValue.truncatingRemainder(dividingBy: 1)) * 100) : 0
+                self.isLoading = false
+                self.isInitialized = true
             }
             
-            print("✅ 更新完成:")
-            print("  - 范围: \(minValue)...\(maxValue)")
-            print("  - 当前值: \(self.integerPart).\(self.decimalPart)")
+            print("📏 范围: \(defaultRange.first ?? 0)...\(defaultRange.last ?? 0)")
+            print("🎯 初始值: \(self.integerPart).\(self.decimalPart)")
             
-            // 更新最终值
             self.updateValue()
         }
+        
+        print("✅ 初始化完成\n")
     }
     
     var body: some View {
@@ -918,61 +932,6 @@ struct WeightInputColumn: View {
             print("🔄 组件加载 - \(exercise.name)")
             initializeValues()
         }
-        // 修改 onChange 处理
-        .onChange(of: exercise.lastRecord) { oldValue, newValue in
-            print("\n📝 检测到历史记录更新:")
-            print("  - 旧值: \(oldValue ?? 0)")
-            print("  - 新值: \(newValue ?? 0)")
-            
-            if let newRecord = newValue {
-                handleRecordUpdate(newRecord)
-            }
-        }
-    }
-    
-    private func initializeValues() {
-        print("\n📊 初始化值 - \(exercise.name):")
-        
-        if let lastRecord = exercise.lastRecord, lastRecord > 0 {
-            handleRecordUpdate(lastRecord)
-        } else {
-            print("ℹ️ 无历史记录，使用默认范围")
-            let defaultRange = switch exercise.unit {
-            case "kg", "lbs": Array(1...200)
-            case "次", "组": Array(1...30)
-            case "秒": Array(1...60)
-            case "分钟": Array(1...60)
-            case "m": Array(1...200)
-            case "km", "mile": Array(1...30)
-            default: Array(1...100)
-            }
-            
-            DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    self.range = defaultRange
-                    self.integerPart = defaultRange[defaultRange.count / 2]
-                    self.decimalPart = 0
-                    self.isLoading = false
-                    self.isInitialized = true
-                }
-                
-                print("📏 默认范围: 1...\(defaultRange.count)")
-                print("🎯 默认值: \(self.integerPart)")
-                
-                self.updateValue()
-            }
-        }
-        
-        print("✅ 初始化完成\n")
-    }
-    
-    // 添加查找最接近的小数部分的方法
-    private func findClosestDecimalPart(_ value: Int) -> Int {
-        // 获取可用的小数部分选项
-        let availableDecimals = decimalParts
-        
-        // 找到最接近的值
-        return availableDecimals.min(by: { abs($0 - value) < abs($1 - value) }) ?? 0
     }
     
     // 根据单位类型返回对应图标
