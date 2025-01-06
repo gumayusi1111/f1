@@ -229,15 +229,15 @@ struct AddTrainingView: View {
                                 .scaleEffect(isCompleting ? 0.9 : 1)
                         }
                     }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(
+                        selectedExercise == nil || weight.isEmpty ? 
+                            Color.gray.opacity(0.3) : Color.blue
+                    )
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background(
-                    selectedExercise == nil || weight.isEmpty ? 
-                        Color.gray.opacity(0.3) : Color.blue
-                )
-                .foregroundColor(.white)
-                .cornerRadius(12)
                 .padding()
                 .disabled(selectedExercise == nil || weight.isEmpty || isLoading)
                 .scaleEffect(isCompleting ? 0.95 : 1)
