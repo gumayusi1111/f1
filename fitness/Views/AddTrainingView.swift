@@ -455,19 +455,35 @@ struct TrainingSearchBar: View {
     
     var body: some View {
         HStack {
+            // 搜索图标
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
+                .padding(.leading, 8)
+            
+            // 搜索输入框
             TextField("搜索训练项目", text: $text)
+                .textFieldStyle(.plain)
+                .padding(.vertical, 10)
+            
+            // 清除按钮
             if !text.isEmpty {
-                Button(action: onClear) {
+                Button(action: {
+                    text = ""
+                    onClear()
+                }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
+                        .padding(.trailing, 8)
                 }
             }
         }
-        .padding(8)
-        .background(Color(.systemGray6))
-        .cornerRadius(8)
+        .background(Color(.systemBackground)) // 白色背景
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(.systemGray4), lineWidth: 1) // 添加边框
+        )
+        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1) // 添加轻微阴影
     }
 }
 
