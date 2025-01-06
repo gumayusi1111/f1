@@ -23,6 +23,10 @@ struct AddTrainingView: View {
     @State private var engine: CHHapticEngine?
     @AppStorage("todayTrainingPart") private var todayTrainingPart: String = "" // 存储今日训练部位
     
+    // 添加数值选择器的状态变量
+    @State private var selectedIntegerPart: Int = 1
+    @State private var selectedDecimalPart: Int = 0
+    
     let bodyParts = ["全部", "胸部", "背部", "腿部", "肩部", "手臂", "核心"]
     var onTrainingAdded: () -> Void
     
@@ -166,6 +170,8 @@ struct AddTrainingView: View {
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                         withAnimation(.spring(response: 0.3)) {
                                             selectedExercise = exercise
+                                            // 加载选中项目的历史记录
+                                            loadLastRecord(for: exercise)
                                         }
                                     }
                                 }
@@ -249,8 +255,6 @@ struct AddTrainingView: View {
     // 加载训练项目
     private func loadExercises() {
         let db = Firestore.firestore()
-        
-        // 创建 DispatchGroup 来协调两个异步请求
         let group = DispatchGroup()
         var allExercises: [Exercise] = []
         
@@ -261,10 +265,14 @@ struct AddTrainingView: View {
                 defer { group.leave() }
                 
                 if let documents = snapshot?.documents {
-                    let systemExercises = documents.compactMap { doc in
-                        try? doc.data(as: Exercise.self)
+                    print("📚 加载系统预设项目:")
+                    for doc in documents {
+                        if let exercise = try? doc.data(as: Exercise.self) {
+                            print("  - 项目: \(exercise.name)")
+                            print("  - ID: \(exercise.id)")
+                            allExercises.append(exercise)
+                        }
                     }
-                    allExercises.append(contentsOf: systemExercises)
                 }
             }
         
@@ -283,16 +291,120 @@ struct AddTrainingView: View {
                 }
                 
                 if let documents = snapshot?.documents {
-                    let userExercises = documents.compactMap { doc in
-                        try? doc.data(as: Exercise.self)
+                    print("👤 加载用户自定义项目:")
+                    for doc in documents {
+                        if let exercise = try? doc.data(as: Exercise.self) {
+                            print("  - 项目: \(exercise.name)")
+                            print("  - ID: \(exercise.id)")
+                            allExercises.append(exercise)
+                        }
                     }
-                    allExercises.append(contentsOf: userExercises)
                 }
             }
         
-        // 当两个请求都完成时更新 UI
-        group.notify(queue: .main) {
+        group.notify(queue: .main) { [self] in
             self.exercises = allExercises
+            print("✅ 加载完成，共 \(allExercises.count) 个项目")
+        }
+    }
+    
+    private func loadLastRecord(for exercise: Exercise) {
+        let db = Firestore.firestore()
+        
+        // 打印查询路径
+        let path = "users/\(userId)/exercises/\(exercise.id)/records"
+        print("🔍 开始查询记录 - 路径: \(path)")
+        print("📋 训练项目信息:")
+        print("  - ID: \(exercise.id)")
+        print("  - 名称: \(exercise.name)")
+        print("  - 类别: \(exercise.category)")
+        print("  - 是否系统预设: \(exercise.isSystemPreset)")
+        
+        let recordsRef = db.collection("users")
+            .document(userId)
+            .collection("exercises")
+            .document(exercise.isSystemPreset ? exercise.id : exercise.id.uppercased())
+            .collection("records")
+            .order(by: "date", descending: true)
+            .limit(to: 1)
+        
+        recordsRef.getDocuments { snapshot, error in
+            if let error = error {
+                print("❌ 查询失败:")
+                print("  - 错误信息: \(error.localizedDescription)")
+                return
+            }
+            
+            print("📊 查询结果:")
+            print("  - 是否有文档: \(snapshot?.documents.isEmpty == false ? "是" : "否")")
+            print("  - 文档数量: \(snapshot?.documents.count ?? 0)")
+            
+            if let document = snapshot?.documents.first {
+                print("📄 找到最新记录:")
+                print("  - 文档ID: \(document.documentID)")
+                print("  - 所有字段: \(document.data())")
+                
+                if let value = document.get("value") as? Double {
+                    print("✅ 成功获取数值: \(value)")
+                    
+                    DispatchQueue.main.async {
+                        if let index = self.exercises.firstIndex(where: { $0.id == exercise.id }) {
+                            // 更新记录
+                            self.exercises[index].lastRecord = value
+                            print("💾 更新成功 - \(exercise.name): \(value)")
+                            
+                            // 如果当前选中的就是这个项目，更新输入值和范围
+                            if self.selectedExercise?.id == exercise.id {
+                                // 设置整数部分
+                                self.selectedIntegerPart = Int(value)
+                                
+                                // 设置小数部分
+                                let decimal = value.truncatingRemainder(dividingBy: 1)
+                                switch exercise.unit {
+                                case "次", "组":
+                                    self.selectedDecimalPart = decimal >= 0.5 ? 5 : 0
+                                case "秒":
+                                    self.selectedDecimalPart = Int(decimal * 10)
+                                case "分钟":
+                                    self.selectedDecimalPart = Int(decimal * 60)
+                                default:
+                                    self.selectedDecimalPart = Int(decimal * 100)
+                                }
+                                
+                                // 强制刷新 WeightInputColumn
+                                self.weight = String(format: "%.2f", value)
+                            }
+                        }
+                    }
+                } else {
+                    print("⚠️ 无法获取 value 字段")
+                    print("  - 可用字段: \(document.data().keys)")
+                }
+            } else {
+                print("ℹ️ 没有找到 \(exercise.name) 的历史记录")
+            }
+        }
+    }
+    
+    private func updateValue() {
+        guard let exercise = selectedExercise else { return }
+        
+        let finalValue = switch exercise.unit {
+        case "次", "组":
+            Double(selectedIntegerPart) + (selectedDecimalPart == 5 ? 0.5 : 0.0)
+        case "秒":
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 10.0
+        case "分钟":
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 60.0
+        default:
+            Double(selectedIntegerPart) + Double(selectedDecimalPart) / 100.0
+        }
+        
+        weight = switch exercise.unit {
+        case "次", "组", "秒":
+            String(format: "%.1f", finalValue)
+        default:
+            String(format: "%.2f", finalValue)
         }
     }
     
@@ -807,27 +919,29 @@ struct WeightInputColumn: View {
     
     // 计算整数范围
     private var integerRange: [Int] {
-        // 如果有历史最大记录，使用60%-120%的范围
-        if let maxRecord = exercise.maxRecord {
-            let baseValue = Int(maxRecord)
+        // 如果有最近一次记录，使用60%-110%的范围
+        if let lastRecord = exercise.lastRecord {
+            let baseValue = Int(lastRecord)
             let minValue = max(1, Int(Double(baseValue) * 0.6))
-            let maxValue = Int(Double(baseValue) * 1.2)
+            let maxValue = Int(Double(baseValue) * 1.1)
             return Array(minValue...maxValue)
         } else {
             // 如果没有历史记录，使用默认范围
             switch exercise.unit {
             case "次", "组":
-                return Array(0...30)
-            case "秒":
-                return Array(0...60)
-            case "分钟":
-                return Array(0...30)
-            case "m":
-                return Array(0...100)
+                return Array(1...30)  // 从1开始，不包括0
+            case "kg", "lbs":
+                return Array(1...200)
             case "km", "mile":
-                return Array(0...20)
-            default: // kg, lbs 等重量单位
-                return Array(0...200)
+                return Array(1...30)
+            case "m":
+                return Array(1...200)
+            case "秒":
+                return Array(1...60)
+            case "分钟":
+                return Array(1...60)
+            default:
+                return Array(1...100)
             }
         }
     }
