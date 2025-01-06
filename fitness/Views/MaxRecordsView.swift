@@ -216,70 +216,49 @@ struct MaxRecordsView: View {
         }
     }
     
+    // 添加清除缓存的函数
+    private func clearCache() {
+        UserDefaults.standard.removeObject(forKey: PR_CACHE_KEY)
+        self.recentPRs = []
+        print("🧹 已清除PR记录缓存")
+    }
+    
     // 2. 修改 performRefresh 函数
     private func performRefresh() async {
         guard !isRefreshing else { return }
         
         if !canRefresh() {
             showRefreshLimitAlert = true
-            isRefreshing = false
             return
         }
+        
+        isRefreshing = true
+        
+        // 清除缓存以确保获取最新数据
+        clearCache()
         
         print("\n========== 开始刷新数据 ==========")
         print("📱 开始刷新: \(Date())")
         
-        isRefreshing = true
-        
         do {
-            // 1. 优先刷新有记录的项目
-            let priorityRecords = recentPRs.filter { $0.maxRecord != nil }
-            if !priorityRecords.isEmpty {
-                print("🔄 优先刷新 \(priorityRecords.count) 个有记录的项目")
-                
-                // 只刷新第一页的有记录项目
-                let firstPageCount = min(pageSize, priorityRecords.count)
-                let priorityFirstPage = Array(priorityRecords[0..<firstPageCount])
-                
-                // 异步更新这些记录
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    for exercise in priorityFirstPage {
-                        group.addTask {
-                            try await updateExerciseRecord(exercise)
-                        }
-                    }
-                    try await group.waitForAll()
-                }
-                
-                // 立即更新UI显示第一页的更新结果
-                DispatchQueue.main.async {
-                    currentPage = 1 // 确保显示第一页
-                    // 触发 filteredPRs 重新计算
-                    self.recentPRs = self.recentPRs
-                }
-            }
+            try await loadExercises()
+            try await loadRecentPRs()
             
-            // 2. 后台继续加载其他数据
-            Task {
-                try await loadExercises()
-                try await loadRecentPRs()
-                
-                // 更新刷新时间和同步状态
-                updateLastRefreshTime()
-                lastSyncDate = Date()
-                updateLastSyncTime()
-                
-                print("✅ 数据刷新成功")
-                print("📅 最后同步时间: \(lastSyncTimeString)")
-            }
+            // 更新刷新时间和同步状态
+            updateLastRefreshTime()
+            lastSyncDate = Date()
+            updateLastSyncTime()
             
+            print("✅ 数据刷新成功")
+            print("📅 最后同步时间: \(lastSyncTimeString)")
         } catch {
             print("❌ 刷新失败: \(error.localizedDescription)")
         }
         
-        // 确保在所有情况下都会重置刷新状态
-        DispatchQueue.main.async {
+        // 确保在主线程上重置状态
+        await MainActor.run {
             isRefreshing = false
+            isFirstLoading = false  // 确保关闭骨架屏
         }
         
         print("========== 刷新结束 ==========\n")
@@ -289,7 +268,6 @@ struct MaxRecordsView: View {
     private func updateExerciseRecord(_ exercise: Exercise) async throws {
         print("\n========== 开始更新运动记录 ==========")
         print("📝 运动项目: \(exercise.name)")
-        print("📝 当前最大记录: \(exercise.maxRecord ?? 0)")
         
         let db = Firestore.firestore()
         let docRef = db.collection("users")
@@ -297,51 +275,45 @@ struct MaxRecordsView: View {
             .collection("exercises")
             .document(exercise.id)
         
-        // 获取运动记录
+        // 获取所有记录并按值排序
         let recordsRef = docRef.collection("records")
-        let records = try await recordsRef.order(by: "value", descending: true).limit(to: 1).getDocuments()
-        
-        print("📝 查询到的记录数: \(records.documents.count)")
+        let records = try await recordsRef
+            .order(by: "value", descending: true)
+            .limit(to: 1)
+            .getDocuments()
         
         if let record = records.documents.first,
            let value = record.data()["value"] as? Double {
-            print("📝 找到最大记录: \(value)")
             
-            // 1. 更新 Firestore
-            let data: [String: Any] = [
-                "maxRecord": value,
-                "updatedAt": FieldValue.serverTimestamp()
-            ]
-            try await docRef.updateData(data)
-            print("✅ Firestore 更新成功")
-            
-            // 2. 更新本地数据
-            if let index = self.recentPRs.firstIndex(where: { $0.id == exercise.id }) {
-                print("📝 更新本地数据 index: \(index)")
-                let updatedExercise = Exercise(
-                    id: exercise.id,
-                    name: exercise.name,
-                    category: exercise.category,
-                    description: exercise.description,
-                    notes: exercise.notes,
-                    isSystemPreset: exercise.isSystemPreset,
-                    unit: exercise.unit,
-                    createdAt: exercise.createdAt,
-                    updatedAt: Date(),
-                    maxRecord: value,
-                    lastRecordDate: exercise.lastRecordDate
-                )
+            // 检查是否需要更新
+            if value != exercise.maxRecord {
+                print("📝 发现新的最大记录: \(value)")
                 
-                // 3. 强制刷新整个数组
-                var newPRs = self.recentPRs
-                newPRs[index] = updatedExercise
-                self.recentPRs = newPRs
+                // 1. 更新 Firestore - 使用 @Sendable 闭包
+                try await Task { @MainActor in
+                    try await docRef.updateData([
+                        "maxRecord": value,
+                        "lastRecordDate": FieldValue.serverTimestamp()
+                    ] as [String: Any])
+                }.value
                 
-                print("📝 本地数据更新完成，新记录: \(value)")
+                // 2. 更新本地数据
+                if let index = self.recentPRs.firstIndex(where: { $0.id == exercise.id }) {
+                    var updatedExercise = exercise
+                    updatedExercise.maxRecord = value
+                    updatedExercise.lastRecordDate = Date()
+                    
+                    // 强制刷新整个数组以触发 UI 更新
+                    var newPRs = self.recentPRs
+                    newPRs[index] = updatedExercise
+                    self.recentPRs = newPRs
+                    
+                    print("✅ 本地数据更新完成，新记录: \(value)")
+                }
+            } else {
+                print("ℹ️ 无需更新，当前记录已是最新")
             }
         }
-        
-        print("========== 更新完成 ==========\n")
     }
     
     var body: some View {
@@ -666,13 +638,12 @@ struct MaxRecordsView: View {
     // 修改加载 PR 记录的函数
     private func loadRecentPRs() async throws {
         print("📱 开始加载PR记录...")
-        isFirstLoading = true
         
         // 1. 先尝试从缓存加载
         if let cached = loadPRsFromCache() {
-            withAnimation {
+            await MainActor.run {
                 self.recentPRs = cached
-                isFirstLoading = false
+                self.isFirstLoading = false  // 确保关闭骨架屏
             }
             print("✅ 从缓存加载了 \(cached.count) 条PR记录")
             
@@ -685,7 +656,9 @@ struct MaxRecordsView: View {
         // 2. 检查网络状态
         guard connectivityManager.isOnline else {
             print("⚠️ 离线状态，使用缓存数据")
-            isFirstLoading = false
+            await MainActor.run {
+                self.isFirstLoading = false
+            }
             return
         }
         
@@ -700,7 +673,9 @@ struct MaxRecordsView: View {
                 .getDocuments { [self] snapshot, error in
                     if let error = error {
                         print("❌ 加载PR记录失败: \(error.localizedDescription)")
-                        isFirstLoading = false
+                        Task { @MainActor in
+                            self.isFirstLoading = false
+                        }
                         continuation.resume(throwing: error)
                         return
                     }
@@ -710,39 +685,33 @@ struct MaxRecordsView: View {
                             try? document.data(as: Exercise.self)
                         }
                         
-                        // 加载系统预设项目
-                        db.collection("systemExercises")
-                            .getDocuments { snapshot, error in
-                                if let error = error {
-                                    print("❌ 加载系统预设失败: \(error.localizedDescription)")
-                                    continuation.resume(throwing: error)
-                                    return
-                                }
-                                
-                                if let documents = snapshot?.documents {
-                                    let systemRecords = documents.compactMap { document in
-                                        try? document.data(as: Exercise.self)
-                                    }
-                                    records.append(contentsOf: systemRecords)
-                                    
-                                    withAnimation {
-                                        self.recentPRs = records
-                                        isFirstLoading = false
-                                    }
-                                    
-                                    // 保存到缓存
-                                    self.savePRsToCache(records)
-                                    
-                                    print("✅ 成功加载 \(records.count) 条PR记录（包含 \(systemRecords.count) 条系统记录）")
-                                    continuation.resume(returning: ())
-                                } else {
-                                    print("⚠️ 没有找到系统预设记录")
-                                    continuation.resume(returning: ())
-                                }
+                        // 确保缓存的数据是最新的
+                        records = records.map { exercise in
+                            var updatedExercise = exercise
+                            if let index = self.recentPRs.firstIndex(where: { $0.id == exercise.id }) {
+                                updatedExercise.maxRecord = self.recentPRs[index].maxRecord
+                                updatedExercise.lastRecordDate = self.recentPRs[index].lastRecordDate
                             }
+                            return updatedExercise
+                        }
+                        
+                        Task { @MainActor in
+                            withAnimation {
+                                self.recentPRs = records
+                                self.isFirstLoading = false  // 确保关闭骨架屏
+                            }
+                        }
+                        
+                        // 保存到缓存
+                        self.savePRsToCache(records)
+                        
+                        print("✅ 成功加载 \(records.count) 条PR记录")
+                        continuation.resume(returning: ())
                     } else {
-                        print("⚠️ 没有找到PR记录")
-                        isFirstLoading = false
+                        print("⚠️ 没有找到记录")
+                        Task { @MainActor in
+                            self.isFirstLoading = false  // 确保关闭骨架屏
+                        }
                         continuation.resume(returning: ())
                     }
                 }
