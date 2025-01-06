@@ -230,6 +230,9 @@ struct AddPRRecordView: View {
                     .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
                     .padding(.horizontal)
                     
+                    // 使用新的进步图表
+                    ExerciseProgressChart(records: records, unit: exercise.unit ?? "")
+                    
                     // 历史记录列表
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
