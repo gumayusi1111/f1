@@ -10,8 +10,8 @@ struct AddTrainingView: View {
     @State private var selectedBodyPart = "胸部"
     @State private var selectedExercise: Exercise? = nil
     @State private var duration = ""
-    @State private var sets = 3  // 组数
-    @State private var reps = 12 // 次数
+    @State private var sets = 1  // 组数
+    @State private var reps = 8  // 次数
     @State private var weight = "" // 重量
     @State private var notes = ""
     @State private var searchText = ""
@@ -51,8 +51,8 @@ struct AddTrainingView: View {
     private func clearAllInputs() {
         searchText = ""
         selectedExercise = nil
-        sets = 3
-        reps = 12
+        sets = 1
+        reps = 8
         weight = ""
         notes = ""
     }
