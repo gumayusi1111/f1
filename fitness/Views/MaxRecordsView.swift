@@ -676,13 +676,45 @@ struct MaxRecordsView: View {
             db.collection("systemExercises").getDocuments { snapshot, error in
                 if let error = error {
                     loadError = error
-                } else if let documents = snapshot?.documents {
-                    let systemExercises = documents.compactMap { doc in
-                        try? doc.data(as: Exercise.self)
-                    }
-                    allRecords.append(contentsOf: systemExercises)
+                    group.leave()
+                    return
                 }
-                group.leave()
+                
+                // 创建一个组来处理每个系统预设的记录检查
+                let recordGroup = DispatchGroup()
+                var systemExercises: [Exercise] = []
+                
+                if let documents = snapshot?.documents {
+                    for doc in documents {
+                        recordGroup.enter()
+                        // 检查用户collection中的记录
+                        db.collection("users")
+                            .document(userId)
+                            .collection("exercises")
+                            .document(doc.documentID)
+                            .collection("records")
+                            .order(by: "value", descending: true)
+                            .limit(to: 1)
+                            .getDocuments { recordSnapshot, _ in
+                                if var exercise = try? doc.data(as: Exercise.self) {
+                                    // 如果有记录，更新maxRecord和lastRecordDate
+                                    if let record = recordSnapshot?.documents.first,
+                                       let value = record.data()["value"] as? Double {
+                                        exercise.maxRecord = value
+                                        exercise.lastRecordDate = (record.data()["date"] as? Timestamp)?.dateValue()
+                                    }
+                                    systemExercises.append(exercise)
+                                }
+                                recordGroup.leave()
+                            }
+                    }
+                }
+                
+                // 等待所有记录检查完成
+                recordGroup.notify(queue: .main) {
+                    allRecords.append(contentsOf: systemExercises)
+                    group.leave()
+                }
             }
             
             // 加载用户项目
