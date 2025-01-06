@@ -100,6 +100,12 @@ struct AddTrainingView: View {
         return counts
     }
     
+    private func hideTrainingDetail() {
+        withAnimation(.spring(response: 0.3)) {
+            selectedExercise = nil
+        }
+    }
+    
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -113,6 +119,7 @@ struct AddTrainingView: View {
                                 isSelected: selectedBodyPart == part,
                                 action: { 
                                     withAnimation { 
+                                        hideTrainingDetail()
                                         selectedBodyPart = part 
                                         playHapticFeedback()
                                         if part != "全部" {
@@ -149,8 +156,15 @@ struct AddTrainingView: View {
                                 exercise: exercise,
                                 isSelected: selectedExercise?.id == exercise.id,
                                 onSelect: {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        selectedExercise = exercise
+                                    if selectedExercise?.id == exercise.id {
+                                        hideTrainingDetail()
+                                        return
+                                    }
+                                    hideTrainingDetail()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            selectedExercise = exercise
+                                        }
                                     }
                                 }
                             )
@@ -158,6 +172,12 @@ struct AddTrainingView: View {
                     }
                     .padding()
                 }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 5)
+                        .onChanged { _ in
+                            hideTrainingDetail()
+                        }
+                )
                 
                 // 训练详情输入区域
                 if let exercise = selectedExercise {
