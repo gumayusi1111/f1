@@ -35,6 +35,9 @@ struct AddPRRecordView: View {
     private let maxCacheAge: TimeInterval = 24 * 60 * 60  // 缓存最大保存时间(24小时)
     private let maxCacheRecords = 100  // 最大缓存记录数
     private let minCacheInterval: TimeInterval = 60  // 最小缓存更新间隔(1分钟)
+    @State private var isInitialLoading = true  // 首次加载状态
+    @State private var isRefreshing = false     // 刷新状态
+    @State private var loadingOpacity = 0.0     // 加载动画透明度
     
     // 修改滚轮选择器的范围计算
     private var valueRange: [Double] {
@@ -126,243 +129,260 @@ struct AddPRRecordView: View {
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // 历史最佳卡片
-                    VStack(spacing: 16) {
-                        HStack {
-                            Image(systemName: "trophy.fill")
-                                .font(.title2)
-                                .foregroundColor(.yellow)
-                            Text("历史最佳")
-                                .font(.headline)
-                            Spacer()
-                        }
-                        
-                        if let maxRecord = exercise.maxRecord {
-                            Text("\(maxRecord, specifier: "%.1f") \(exercise.unit ?? "")")
-                                .font(.system(size: 36, weight: .bold))
-                                .foregroundColor(.primary)
-                        } else {
-                            Text("暂无记录")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(16)
-                    .padding(.horizontal)
-                    
-                    // 新记录选择器
-                    VStack(spacing: 20) {
-                        Text("添加新记录")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        
-                        // 数值选择器
-                        HStack {
-                            if exercise.unit == "kg" || exercise.unit == "lbs" || 
-                               exercise.unit == "秒" || exercise.unit == "分钟" || 
-                               exercise.unit == "m" || exercise.unit == "km" || 
-                               exercise.unit == "mile" {
-                                // 整数部分选择器
-                                Picker("整数", selection: $selectedIntegerPart) {
-                                    ForEach(integerRange, id: \.self) { value in
-                                        Text("\(value)").tag(value)
-                                    }
-                                }
-                                .pickerStyle(.wheel)
-                                .frame(width: 80, height: 120)
-                                
-                                Text(".")
-                                    .font(.title2)
-                                    .foregroundColor(.secondary)
-                                
-                                // 小数部分选择器
-                                Picker("小数", selection: $selectedDecimalPart) {
-                                    ForEach(decimalParts, id: \.self) { value in
-                                        Text(getDecimalText(value: value))
-                                            .tag(value)
-                                    }
-                                }
-                                .pickerStyle(.wheel)
-                                .frame(width: exercise.unit == "分钟" ? 100 : 60, height: 120)
-                                
-                                Text(exercise.unit ?? "")
-                                    .font(.title3)
-                                    .foregroundColor(.secondary)
-                                    .padding(.leading, 8)
-                            } else {
-                                // 原有的其他单位选择器保持不变
-                                Picker("选择数值", selection: $selectedValue) {
-                                    ForEach(valueRange, id: \.self) { value in
-                                        Text("\(value, specifier: "%.1f")")
-                                            .tag(value)
-                                    }
-                                }
-                                .pickerStyle(.wheel)
-                                .frame(height: 120)
-                                
-                                Text(exercise.unit ?? "")
-                                    .font(.title3)
-                                    .foregroundColor(.secondary)
-                                    .padding(.leading)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                        
-                        // 保存按钮
-                        Button(action: saveRecord) {
+            ZStack {
+                // 主要内容
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // 历史最佳卡片
+                        VStack(spacing: 16) {
                             HStack {
-                                if isLoading {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    Text("保存中...")
-                                } else {
-                                    Text("保存记录")
-                                        .fontWeight(.semibold)
-                                }
+                                Image(systemName: "trophy.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.yellow)
+                                Text("历史最佳")
+                                    .font(.headline)
+                                Spacer()
                             }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                        }
-                        .disabled(isLoading)
-                    }
-                    .padding()
-                    .background(Color(.systemBackground))
-                    .cornerRadius(16)
-                    .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
-                    .padding(.horizontal)
-                    
-                    // 使用新的进步图表
-                    ExerciseProgressChart(records: records, unit: exercise.unit ?? "")
-                    
-                    // 历史记录列表
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Text("历史记录")
-                                .font(.headline)
-                            Spacer()
-                            if !records.isEmpty {
-                                Button(action: {
-                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                        expandTransition.toggle()
-                                        isHistoryExpanded.toggle()
-                                        if !isHistoryExpanded {
-                                            currentPage = 0
-                                        }
-                                    }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Text(isHistoryExpanded ? "收起" : "展开")
-                                            .font(.subheadline)
-                                            .foregroundColor(.blue)
-                                        Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.blue)
-                                            .rotationEffect(.degrees(expandTransition ? 180 : 0))
-                                    }
-                                }
+                            
+                            if let maxRecord = exercise.maxRecord {
+                                Text("\(maxRecord, specifier: "%.1f") \(exercise.unit ?? "")")
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundColor(.primary)
+                            } else {
+                                Text("暂无记录")
+                                    .font(.title3)
+                                    .foregroundColor(.secondary)
                             }
                         }
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(16)
                         .padding(.horizontal)
                         
-                        if records.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "doc.text")
-                                    .font(.system(size: 40))
-                                    .foregroundColor(.gray)
-                                Text("暂无历史记录")
-                                    .foregroundColor(.secondary)
+                        // 新记录选择器
+                        VStack(spacing: 20) {
+                            Text("添加新记录")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            
+                            // 数值选择器
+                            HStack {
+                                if exercise.unit == "kg" || exercise.unit == "lbs" || 
+                                   exercise.unit == "秒" || exercise.unit == "分钟" || 
+                                   exercise.unit == "m" || exercise.unit == "km" || 
+                                   exercise.unit == "mile" {
+                                    // 整数部分选择器
+                                    Picker("整数", selection: $selectedIntegerPart) {
+                                        ForEach(integerRange, id: \.self) { value in
+                                            Text("\(value)").tag(value)
+                                        }
+                                    }
+                                    .pickerStyle(.wheel)
+                                    .frame(width: 80, height: 120)
+                                    
+                                    Text(".")
+                                        .font(.title2)
+                                        .foregroundColor(.secondary)
+                                    
+                                    // 小数部分选择器
+                                    Picker("小数", selection: $selectedDecimalPart) {
+                                        ForEach(decimalParts, id: \.self) { value in
+                                            Text(getDecimalText(value: value))
+                                                .tag(value)
+                                        }
+                                    }
+                                    .pickerStyle(.wheel)
+                                    .frame(width: exercise.unit == "分钟" ? 100 : 60, height: 120)
+                                    
+                                    Text(exercise.unit ?? "")
+                                        .font(.title3)
+                                        .foregroundColor(.secondary)
+                                        .padding(.leading, 8)
+                                } else {
+                                    // 原有的其他单位选择器保持不变
+                                    Picker("选择数值", selection: $selectedValue) {
+                                        ForEach(valueRange, id: \.self) { value in
+                                            Text("\(value, specifier: "%.1f")")
+                                                .tag(value)
+                                        }
+                                    }
+                                    .pickerStyle(.wheel)
+                                    .frame(height: 120)
+                                    
+                                    Text(exercise.unit ?? "")
+                                        .font(.title3)
+                                        .foregroundColor(.secondary)
+                                        .padding(.leading)
+                                }
                             }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                        } else if isHistoryExpanded {
-                            VStack(spacing: 12) {
-                                let startIndex = currentPage * recordsPerPage
-                                let endIndex = min(startIndex + recordsPerPage, records.count)
-                                let displayedRecords = Array(records[startIndex..<endIndex])
-                                
-                                // 记录列表容器
+                            .padding(.vertical, 8)
+                            
+                            // 保存按钮
+                            Button(action: saveRecord) {
+                                HStack {
+                                    if isLoading {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        Text("保存中...")
+                                    } else {
+                                        Text("保存记录")
+                                            .fontWeight(.semibold)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                            }
+                            .disabled(isLoading)
+                        }
+                        .padding()
+                        .background(Color(.systemBackground))
+                        .cornerRadius(16)
+                        .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
+                        .padding(.horizontal)
+                        
+                        // 使用新的进步图表
+                        ExerciseProgressChart(records: records, unit: exercise.unit ?? "")
+                        
+                        // 历史记录列表
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack {
+                                Text("历史记录")
+                                    .font(.headline)
+                                Spacer()
+                                if !records.isEmpty {
+                                    Button(action: {
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                            expandTransition.toggle()
+                                            isHistoryExpanded.toggle()
+                                            if !isHistoryExpanded {
+                                                currentPage = 0
+                                            }
+                                        }
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Text(isHistoryExpanded ? "收起" : "展开")
+                                                .font(.subheadline)
+                                                .foregroundColor(.blue)
+                                            Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.blue)
+                                                .rotationEffect(.degrees(expandTransition ? 180 : 0))
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                            
+                            if records.isEmpty {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "doc.text")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(.gray)
+                                    Text("暂无历史记录")
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 40)
+                            } else if isHistoryExpanded {
                                 VStack(spacing: 12) {
-                                    ForEach(displayedRecords) { record in
-                                        RecordRow(
-                                            record: record,
-                                            unit: exercise.unit ?? "",
-                                            onDelete: {
-                                                recordToDelete = record
-                                                showingDeleteAlert = true
-                                            },
-                                            isDeleting: record.id == deletedRecordId
-                                        )
-                                        .transition(.asymmetric(
-                                            insertion: .move(edge: pageTransition > 0 ? .trailing : .leading)
-                                                .combined(with: .opacity),
-                                            removal: .move(edge: pageTransition > 0 ? .leading : .trailing)
-                                                .combined(with: .opacity)
-                                        ))
+                                    let startIndex = currentPage * recordsPerPage
+                                    let endIndex = min(startIndex + recordsPerPage, records.count)
+                                    let displayedRecords = Array(records[startIndex..<endIndex])
+                                    
+                                    // 记录列表容器
+                                    VStack(spacing: 12) {
+                                        ForEach(displayedRecords) { record in
+                                            RecordRow(
+                                                record: record,
+                                                unit: exercise.unit ?? "",
+                                                onDelete: {
+                                                    recordToDelete = record
+                                                    showingDeleteAlert = true
+                                                },
+                                                isDeleting: record.id == deletedRecordId
+                                            )
+                                            .transition(.asymmetric(
+                                                insertion: .move(edge: pageTransition > 0 ? .trailing : .leading)
+                                                    .combined(with: .opacity),
+                                                removal: .move(edge: pageTransition > 0 ? .leading : .trailing)
+                                                    .combined(with: .opacity)
+                                            ))
+                                        }
+                                    }
+                                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentPage)
+                                    
+                                    // 分页控制
+                                    if records.count > recordsPerPage {
+                                        HStack(spacing: 20) {
+                                            Button(action: {
+                                                pageTransition = -1
+                                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                                    currentPage = max(0, currentPage - 1)
+                                                }
+                                            }) {
+                                                Image(systemName: "chevron.left")
+                                                    .font(.system(size: 16, weight: .semibold))
+                                            }
+                                            .disabled(currentPage == 0)
+                                            .opacity(currentPage == 0 ? 0.5 : 1)
+                                            
+                                            Text("\(currentPage + 1) / \(Int(ceil(Double(records.count) / Double(recordsPerPage))))")
+                                                .font(.subheadline)
+                                                .transition(.opacity)
+                                            
+                                            Button(action: {
+                                                pageTransition = 1
+                                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                                    currentPage = min(currentPage + 1, (records.count - 1) / recordsPerPage)
+                                                }
+                                            }) {
+                                                Image(systemName: "chevron.right")
+                                                    .font(.system(size: 16, weight: .semibold))
+                                            }
+                                            .disabled(currentPage >= (records.count - 1) / recordsPerPage)
+                                            .opacity(currentPage >= (records.count - 1) / recordsPerPage ? 0.5 : 1)
+                                        }
+                                        .foregroundColor(.blue)
+                                        .padding(.top, 8)
+                                        .frame(maxWidth: .infinity)
                                     }
                                 }
-                                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentPage)
-                                
-                                // 分页控制
-                                if records.count > recordsPerPage {
-                                    HStack(spacing: 20) {
-                                        Button(action: {
-                                            pageTransition = -1
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                                currentPage = max(0, currentPage - 1)
-                                            }
-                                        }) {
-                                            Image(systemName: "chevron.left")
-                                                .font(.system(size: 16, weight: .semibold))
-                                        }
-                                        .disabled(currentPage == 0)
-                                        .opacity(currentPage == 0 ? 0.5 : 1)
-                                        
-                                        Text("\(currentPage + 1) / \(Int(ceil(Double(records.count) / Double(recordsPerPage))))")
-                                            .font(.subheadline)
-                                            .transition(.opacity)
-                                        
-                                        Button(action: {
-                                            pageTransition = 1
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                                currentPage = min(currentPage + 1, (records.count - 1) / recordsPerPage)
-                                            }
-                                        }) {
-                                            Image(systemName: "chevron.right")
-                                                .font(.system(size: 16, weight: .semibold))
-                                        }
-                                        .disabled(currentPage >= (records.count - 1) / recordsPerPage)
-                                        .opacity(currentPage >= (records.count - 1) / recordsPerPage ? 0.5 : 1)
-                                    }
-                                    .foregroundColor(.blue)
-                                    .padding(.top, 8)
-                                    .frame(maxWidth: .infinity)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .top).combined(with: .opacity),
+                                    removal: .move(edge: .bottom).combined(with: .opacity)
+                                ))
+                            }
+                        }
+                        .alert("确认删除", isPresented: $showingDeleteAlert) {
+                            Button("取消", role: .cancel) {}
+                            Button("删除", role: .destructive) {
+                                if let record = recordToDelete {
+                                    deleteRecord(record)
                                 }
                             }
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .top).combined(with: .opacity),
-                                removal: .move(edge: .bottom).combined(with: .opacity)
-                            ))
+                        } message: {
+                            Text("确定要删除这条记录吗？")
                         }
                     }
-                    .alert("确认删除", isPresented: $showingDeleteAlert) {
-                        Button("取消", role: .cancel) {}
-                        Button("删除", role: .destructive) {
-                            if let record = recordToDelete {
-                                deleteRecord(record)
-                            }
-                        }
-                    } message: {
-                        Text("确定要删除这条记录吗？")
-                    }
+                    .padding(.vertical)
+                    .opacity(isInitialLoading ? 0 : 1)  // 首次加载时淡入
+                    .animation(.easeIn(duration: 0.3), value: isInitialLoading)
                 }
-                .padding(.vertical)
+                
+                // 加载状态指示器
+                if isInitialLoading {
+                    LoadingView()
+                        .transition(.opacity)
+                }
+                
+                // 刷新指示器
+                if isRefreshing {
+                    RefreshingView()
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
             .navigationTitle(exercise.name)
             .navigationBarItems(
@@ -392,7 +412,7 @@ struct AddPRRecordView: View {
                 }
                 
                 log("开始加载记录...")
-                loadRecords()
+                loadInitialData()
             }
             .overlay(
                 ZStack {
@@ -574,8 +594,27 @@ struct AddPRRecordView: View {
         }
     }
     
+    private func loadInitialData() {
+        isInitialLoading = true
+        
+        // 模拟网络延迟以展示加载动画
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            loadRecords(forceRefresh: true)
+            
+            withAnimation(.easeOut(duration: 0.3)) {
+                isInitialLoading = false
+            }
+        }
+    }
+    
     private func loadRecords(forceRefresh: Bool = false) {
         guard !isLoadingRecords else { return }
+        
+        if forceRefresh {
+            withAnimation {
+                isRefreshing = true
+            }
+        }
         
         log("\n========== 开始加载记录 ==========")
         log("强制刷新: \(forceRefresh)")
@@ -625,7 +664,14 @@ struct AddPRRecordView: View {
         log("- 是否有上一页: \(lastDocument != nil)")
         
         query.getDocuments { snapshot, error in
-            defer { self.isLoadingRecords = false }
+            defer {
+                self.isLoadingRecords = false
+                if forceRefresh {
+                    withAnimation {
+                        self.isRefreshing = false
+                    }
+                }
+            }
             
             if let error = error {
                 log("❌ 加载失败: \(error.localizedDescription)", type: "ERROR")
@@ -671,6 +717,15 @@ struct AddPRRecordView: View {
             // 保存到缓存
             self.saveRecordsToCache(self.records)
             log("💾 已更新缓存,当前总记录数: \(self.records.count)")
+            
+            // 添加数据更新动画
+            withAnimation(.spring()) {
+                if forceRefresh {
+                    self.records = newRecords
+                } else {
+                    self.records.append(contentsOf: newRecords)
+                }
+            }
         }
     }
     
@@ -711,9 +766,8 @@ struct AddPRRecordView: View {
             generator.notificationOccurred(.success)
             
             // 显示删除成功动画
-            withAnimation(.spring()) {
-                showDeleteSuccessAnimation = true
-                deletedRecordId = record.id
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                self.records.removeAll { $0.id == record.id }
             }
             
             // 如果删除的是PR记录,需要更新最大记录
@@ -1017,4 +1071,35 @@ struct ExerciseRecord: Identifiable, Codable {
     let value: Double
     let date: Date
     let isPR: Bool
+} 
+
+// 加载指示器视图
+private struct LoadingView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.5)
+            Text("加载中...")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
+// 刷新指示器视图
+private struct RefreshingView: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .scaleEffect(0.8)
+            Text("更新中...")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(.systemBackground))
+        .cornerRadius(20)
+        .shadow(radius: 2)
+    }
 } 
