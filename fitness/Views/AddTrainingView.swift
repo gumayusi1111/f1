@@ -80,6 +80,20 @@ struct AddTrainingView: View {
         }
     }
     
+    private var categoryCounts: [String: Int] {
+        var counts: [String: Int] = [:]
+        
+        // 计算全部数量
+        counts["全部"] = exercises.count
+        
+        // 计算每个分类的数量
+        for bodyPart in bodyParts where bodyPart != "全部" {
+            counts[bodyPart] = exercises.filter { $0.category == bodyPart }.count
+        }
+        
+        return counts
+    }
+    
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -89,6 +103,7 @@ struct AddTrainingView: View {
                         ForEach(bodyParts, id: \.self) { part in
                             BodyPartButton(
                                 part: part,
+                                count: categoryCounts[part] ?? 0,
                                 isSelected: selectedBodyPart == part,
                                 action: { 
                                     withAnimation { 
@@ -327,6 +342,7 @@ struct AddTrainingView: View {
 
 struct BodyPartButton: View {
     let part: String
+    let count: Int
     let isSelected: Bool
     let action: () -> Void
     
@@ -335,8 +351,14 @@ struct BodyPartButton: View {
             VStack(spacing: 8) {
                 Image(systemName: bodyPartIcon(part))
                     .font(.system(size: 24))
-                Text(part)
-                    .font(.system(size: 14))
+                
+                VStack(spacing: 4) {
+                    Text(part)
+                        .font(.system(size: 14))
+                    Text("\(count)")
+                        .font(.system(size: 12))
+                        .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
+                }
             }
             .frame(width: 80, height: 80)
             .background(isSelected ? Color.blue : Color(.systemGray6))
