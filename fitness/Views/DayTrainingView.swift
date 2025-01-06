@@ -16,6 +16,10 @@ struct DayTrainingView: View {
     @State private var errorMessage = ""
     @State private var isLoading = false
     
+    @State private var showingDeleteAlert = false
+    @State private var selectedRecord: TrainingRecord? = nil
+    @State private var trainings: [TrainingRecord] = []
+    
     let bodyParts = ["胸部", "背部", "腿部", "肩部", "手臂", "核心"]
     
     // 添加缓存键
@@ -91,6 +95,43 @@ struct DayTrainingView: View {
                     }
                 }
                 
+                // 训练记录列表
+                if !trainings.isEmpty {
+                    List {
+                        ForEach(trainings) { record in
+                            TrainingRecordRow(record: record)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        selectedRecord = record
+                                        showingDeleteAlert = true
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                }
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .padding(.vertical)
+                } else if !selectedBodyPart.isEmpty {
+                    // 显示空状态
+                    VStack(spacing: 12) {
+                        Image(systemName: "dumbbell.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.gray)
+                        Text("今日暂无训练记录")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                        Text("点击上方按钮开始添加")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                }
+                
                 Spacer()
             }
             .padding()
@@ -106,6 +147,7 @@ struct DayTrainingView: View {
             }
             .onAppear {
                 loadTrainingPart()
+                loadTrainings()
             }
             .overlay {
                 if isLoading {
@@ -139,6 +181,16 @@ struct DayTrainingView: View {
                 Button("确定", role: .cancel) { }
             } message: {
                 Text(errorMessage)
+            }
+            .alert("确认删除", isPresented: $showingDeleteAlert) {
+                Button("取消", role: .cancel) { }
+                Button("删除", role: .destructive) {
+                    if let record = selectedRecord {
+                        deleteTraining(record)
+                    }
+                }
+            } message: {
+                Text("确定要删除这条训练记录吗？")
             }
         }
     }
@@ -319,6 +371,54 @@ struct DayTrainingView: View {
                 }
             }
     }
+    
+    private func deleteTraining(_ record: TrainingRecord) {
+        let db = Firestore.firestore()
+        db.collection("users")
+            .document(userId)
+            .collection("trainings")
+            .document(record.id)
+            .delete { error in
+                if let error = error {
+                    print("删除失败: \(error.localizedDescription)")
+                } else {
+                    if let index = trainings.firstIndex(where: { $0.id == record.id }) {
+                        trainings.remove(at: index)
+                    }
+                }
+            }
+    }
+    
+    // 添加加载训练记录的函数
+    private func loadTrainings() {
+        let db = Firestore.firestore()
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+        
+        db.collection("users")
+            .document(userId)
+            .collection("trainings")
+            .whereField("date", isGreaterThanOrEqualTo: startOfDay)
+            .whereField("date", isLessThan: endOfDay)
+            .addSnapshotListener { snapshot, error in
+                if let documents = snapshot?.documents {
+                    self.trainings = documents.compactMap { doc in
+                        let data = doc.data()
+                        return TrainingRecord(
+                            id: doc.documentID,
+                            type: data["type"] as? String ?? "",
+                            bodyPart: data["bodyPart"] as? String ?? "",
+                            sets: data["sets"] as? Int ?? 0,
+                            reps: data["reps"] as? Int ?? 0,
+                            weight: data["weight"] as? Double ?? 0,
+                            notes: data["notes"] as? String ?? "",
+                            date: (data["date"] as? Timestamp)?.dateValue() ?? Date()
+                        )
+                    }
+                }
+            }
+    }
 }
 
 // 训练记录行视图
@@ -326,40 +426,126 @@ struct TrainingRecordRow: View {
     let record: TrainingRecord
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            // 顶部：训练类型和部位标签
             HStack {
                 Text(record.type)
-                    .font(.headline)
+                    .font(.system(size: 17, weight: .semibold))
+                
                 Spacer()
+                
                 Text(record.bodyPart)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundColor(getCategoryColor(record.bodyPart))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color(.systemGray6))
-                    )
+                    .background(getCategoryColor(record.bodyPart).opacity(0.1))
+                    .cornerRadius(6)
             }
             
+            // 中间：训练数据
             HStack(spacing: 16) {
-                Label("\(record.sets)组", systemImage: "number.circle.fill")
-                Label("\(record.reps)次", systemImage: "repeat.circle.fill")
-                Label("\(Int(record.weight))kg", systemImage: "scalemass.fill")
+                HStack(spacing: 4) {
+                    Image(systemName: "number.circle.fill")
+                        .foregroundColor(.blue)
+                    Text("\(record.sets)组 × \(record.reps)次")
+                }
+                .font(.system(size: 15))
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "scalemass.fill")
+                        .foregroundColor(.blue)
+                    Text(String(format: "%.1f kg", record.weight))
+                }
+                .font(.system(size: 15))
             }
-            .font(.subheadline)
-            .foregroundColor(.secondary)
             
-            if !record.notes.isEmpty {
-                Text(record.notes)
-                    .font(.subheadline)
+            // 底部：备注和时间
+            HStack {
+                if !record.notes.isEmpty {
+                    Text(record.notes)
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Text(record.date.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 13))
                     .foregroundColor(.secondary)
-                    .padding(.top, 4)
             }
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 5)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 8, y: 2)
+        )
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+    }
+    
+    // 获取类别颜色
+    private func getCategoryColor(_ category: String) -> Color {
+        switch category {
+        case "胸部": return .red
+        case "背部": return .blue
+        case "腿部": return .purple
+        case "肩部": return .orange
+        case "手臂": return .green
+        case "核心": return .pink
+        default: return .blue
+        }
+    }
+}
+
+// 1. 首先添加一个 SwipeView 组件
+struct SwipeView<Content: View>: View {
+    let content: Content
+    let onDelete: () -> Void
+    @State private var offset: CGFloat = 0
+    @State private var isSwiped = false
+    
+    init(@ViewBuilder content: () -> Content, onDelete: @escaping () -> Void) {
+        self.content = content()
+        self.onDelete = onDelete
+    }
+    
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // 删除按钮
+            Button(action: onDelete) {
+                Image(systemName: "trash.fill")
+                    .foregroundColor(.white)
+                    .frame(width: 60, height: 50)
+            }
+            .frame(width: 60, height: 50)
+            .background(Color.red)
+            .cornerRadius(12)
+            
+            // 内容视图
+            content
+                .offset(x: offset)
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            withAnimation {
+                                if value.translation.width < 0 {
+                                    offset = max(value.translation.width, -60)
+                                }
+                            }
+                        }
+                        .onEnded { value in
+                            withAnimation {
+                                if value.translation.width < -50 {
+                                    isSwiped = true
+                                    offset = -60
+                                } else {
+                                    isSwiped = false
+                                    offset = 0
+                                }
+                            }
+                        }
+                )
+        }
     }
 } 

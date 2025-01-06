@@ -147,11 +147,6 @@ struct AddTrainingView: View {
                 }
                 .padding(.vertical, 8)
                 
-                // 今日训练记录
-                if !todayRecords.isEmpty {
-                    TodayTrainingSection(records: todayRecords)
-                }
-                
                 // 搜索栏
                 TrainingSearchBar(
                     text: $searchText,
@@ -242,7 +237,6 @@ struct AddTrainingView: View {
             .onAppear {
                 prepareHaptics()
                 loadExercises()
-                loadTodayRecords()
                 
                 // 如果有今日训练部位,自动滚动到对应分类
                 if !todayTrainingPart.isEmpty {
@@ -455,36 +449,6 @@ struct AddTrainingView: View {
                 }
             }
     }
-    
-    private func loadTodayRecords() {
-        let db = Firestore.firestore()
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: date)
-        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
-        
-        db.collection("users")
-            .document(userId)
-            .collection("trainings")
-            .whereField("date", isGreaterThanOrEqualTo: startOfDay)
-            .whereField("date", isLessThan: endOfDay)
-            .getDocuments(source: .default) { snapshot, error in
-                if let documents = snapshot?.documents {
-                    self.todayRecords = documents.compactMap { doc in
-                        let data = doc.data()
-                        return TrainingRecord(
-                            id: doc.documentID,
-                            type: data["type"] as? String ?? "",
-                            bodyPart: data["bodyPart"] as? String ?? "",
-                            sets: data["sets"] as? Int ?? 0,
-                            reps: data["reps"] as? Int ?? 0,
-                            weight: data["weight"] as? Double ?? 0,
-                            notes: data["notes"] as? String ?? "",
-                            date: (data["date"] as? Timestamp)?.dateValue() ?? Date()
-                        )
-                    }
-                }
-            }
-    }
 }
 
 // MARK: - 辅助视图组件
@@ -620,60 +584,6 @@ struct TrainingSearchBar: View {
                 .stroke(Color(.systemGray4), lineWidth: 1) // 添加边框
         )
         .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1) // 添加轻微阴影
-    }
-}
-
-// 今日训练记录部分
-struct TodayTrainingSection: View {
-    let records: [TrainingRecord]
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader
-            recordsList
-        }
-        .padding(.vertical)
-        .background(Color(.systemGray6).opacity(0.5))
-    }
-    
-    private var sectionHeader: some View {
-        Text("今日已完成")
-            .font(.headline)
-            .padding(.horizontal)
-    }
-    
-    private var recordsList: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(records) { record in
-                    TrainingRecordCard(record: record)
-                }
-            }
-            .padding(.horizontal)
-        }
-    }
-}
-
-struct TrainingRecordCard: View {
-    let record: TrainingRecord
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(record.type)
-                .font(.subheadline)
-                .fontWeight(.medium)
-            
-            Text("\(record.sets)组 × \(record.reps)次")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            
-            Text("\(Int(record.weight))kg")
-                .font(.caption)
-                .foregroundColor(.blue)
-        }
-        .padding(8)
-        .background(Color(.systemBackground))
-        .cornerRadius(8)
     }
 }
 
