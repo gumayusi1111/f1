@@ -571,6 +571,54 @@ struct TrainingDetailSection: View {
     @Binding var weight: String
     @Binding var notes: String
     
+    // 添加状态变量用于整数和小数部分选择
+    @State private var selectedIntegerPart: Int = 0
+    @State private var selectedDecimalPart: Int = 0
+    
+    // 添加整数范围计算属性
+    private var integerRange: [Int] {
+        switch exercise.unit {
+        case "次", "组":
+            return Array(0...30)
+        case "秒":
+            return Array(0...60)
+        case "分钟":
+            return Array(0...30)
+        case "m":
+            return Array(0...100)
+        case "km", "mile":
+            return Array(0...20)
+        default: // kg, lbs 等重量单位
+            return Array(0...200)
+        }
+    }
+    
+    // 添加小数部分选项
+    private var decimalParts: [Int] {
+        switch exercise.unit {
+        case "秒":
+            return Array(0...9)
+        case "分钟":
+            return Array(0...59)
+        case "m":
+            return [0, 5]
+        case "km", "mile":
+            return [0, 25, 50, 75]
+        default: // kg, lbs 等重量单位
+            return [0, 25, 50, 75]
+        }
+    }
+    
+    // 格式化小数文本
+    private func getDecimalText(value: Int) -> String {
+        switch exercise.unit {
+        case "分钟":
+            return "\(value)秒"
+        default:
+            return String(format: "%02d", value)
+        }
+    }
+    
     var body: some View {
         VStack(spacing: 20) {
             // 顶部把手示意
@@ -613,7 +661,15 @@ struct TrainingDetailSection: View {
                     .frame(width: 1, height: 80)
                 
                 // 重量输入
-                WeightInputColumn(weight: $weight)
+                WeightInputColumn(
+                    value: Binding(
+                        get: { weight },
+                        set: { weight = $0 }
+                    ),
+                    exercise: exercise,
+                    integerPart: $selectedIntegerPart,
+                    decimalPart: $selectedDecimalPart
+                )
             }
             .padding(.vertical, 10)
             
@@ -661,29 +717,137 @@ struct NumberPickerColumn: View {
     }
 }
 
-// 添加重量输入列组件
+// 修改 WeightInputColumn 组件
 struct WeightInputColumn: View {
-    @Binding var weight: String
+    @Binding var value: String
+    let exercise: Exercise
+    @Binding var integerPart: Int
+    @Binding var decimalPart: Int
+    
+    // 计算整数范围
+    private var integerRange: [Int] {
+        // 如果有历史最大记录，使用60%-120%的范围
+        if let maxRecord = exercise.maxRecord {
+            let baseValue = Int(maxRecord)
+            let minValue = max(1, Int(Double(baseValue) * 0.6))
+            let maxValue = Int(Double(baseValue) * 1.2)
+            return Array(minValue...maxValue)
+        } else {
+            // 如果没有历史记录，使用默认范围
+            switch exercise.unit {
+            case "次", "组":
+                return Array(0...30)
+            case "秒":
+                return Array(0...60)
+            case "分钟":
+                return Array(0...30)
+            case "m":
+                return Array(0...100)
+            case "km", "mile":
+                return Array(0...20)
+            default: // kg, lbs 等重量单位
+                return Array(0...200)
+            }
+        }
+    }
+    
+    // 计算小数部分选项
+    private var decimalParts: [Int] {
+        switch exercise.unit {
+        case "次", "组":
+            // 次数和组数只有 .0 和 .5
+            return [0, 5]
+        case "秒":
+            // 秒数是 0-9
+            return Array(0...9)
+        case "分钟":
+            // 分钟的小数是 0-59 秒
+            return Array(0...59)
+        case "m", "km", "mile", "kg", "lbs":
+            // 距离和重量单位使用 .00, .25, .50, .75
+            return [0, 25, 50, 75]
+        default:
+            return [0]
+        }
+    }
+    
+    private func getDecimalText(_ value: Int) -> String {
+        switch exercise.unit {
+        case "次", "组":
+            // 次数和组数显示一位小数 (x.0 或 x.5)
+            return value == 0 ? "0" : "5"
+        case "秒":
+            // 秒数显示一位小数 (x.0-x.9)
+            return "\(value)"
+        case "分钟":
+            // 分钟显示秒数 (x分y秒)
+            return "\(value)秒"
+        case "m", "km", "mile", "kg", "lbs":
+            // 距离和重量显示两位小数 (xx.00, xx.25, xx.50, xx.75)
+            return value == 0 ? "00" : String(format: "%02d", value)
+        default:
+            return "0"
+        }
+    }
     
     var body: some View {
         VStack(spacing: 6) {
-            Text("重量")
+            Text(exercise.unit ?? "")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             
-            HStack(alignment: .center, spacing: 4) {
-                TextField("0", text: $weight)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.center)
-                    .frame(width: 60)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
+            HStack(spacing: 4) {
+                // 整数部分选择器
+                Picker("", selection: $integerPart) {
+                    ForEach(integerRange, id: \.self) { num in
+                        Text("\(num)")
+                            .tag(num)
+                    }
+                }
+                .pickerStyle(.wheel)  // 改回滚动样式
+                .frame(width: 80, height: 100)
+                .clipped()
                 
-                Text("kg")
-                    .font(.subheadline)
+                Text(".")
+                    .font(.title3)
                     .foregroundColor(.secondary)
+                
+                // 小数部分选择器
+                Picker("", selection: $decimalPart) {
+                    ForEach(decimalParts, id: \.self) { num in
+                        Text(getDecimalText(num))
+                            .tag(num)
+                    }
+                }
+                .pickerStyle(.wheel)  // 改回滚动样式
+                .frame(width: 60, height: 100)
+                .clipped()
             }
-            .frame(height: 100, alignment: .center)
+            .onChange(of: integerPart) { oldValue, newValue in
+                updateValue()
+            }
+            .onChange(of: decimalPart) { oldValue, newValue in
+                updateValue()
+            }
         }
+    }
+    
+    private func updateValue() {
+        let finalValue = switch exercise.unit {
+        case "次", "组":
+            // 次数和组数，5表示0.5
+            Double(integerPart) + (decimalPart == 5 ? 0.5 : 0.0)
+        case "秒":
+            // 秒数，直接使用一位小数
+            Double(integerPart) + Double(decimalPart) / 10.0
+        case "分钟":
+            // 分钟，将秒数转换为分钟的小数部分
+            Double(integerPart) + Double(decimalPart) / 60.0
+        default:
+            // 其他单位（重量、距离等）使用标准小数
+            Double(integerPart) + Double(decimalPart) / 100.0
+        }
+        value = String(format: "%.2f", finalValue)
     }
 }
 
