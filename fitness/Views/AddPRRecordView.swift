@@ -31,6 +31,10 @@ struct AddPRRecordView: View {
     @State private var hasMoreRecords = true // 是否还有更多记录
     private let pageSize = 10 // 每页加载记录数
     var onRecordUpdate: (() -> Void)?
+    private let cacheVersion = 1  // 缓存版本号
+    private let maxCacheAge: TimeInterval = 24 * 60 * 60  // 缓存最大保存时间(24小时)
+    private let maxCacheRecords = 100  // 最大缓存记录数
+    private let minCacheInterval: TimeInterval = 60  // 最小缓存更新间隔(1分钟)
     
     // 修改滚轮选择器的范围计算
     private var valueRange: [Double] {
@@ -831,24 +835,112 @@ struct AddPRRecordView: View {
     }
     
     private func getCacheKey(for exerciseId: String) -> String {
-        return "exercise_records_\(exerciseId)"
+        return "exercise_records_v\(cacheVersion)_\(exerciseId)"
+    }
+    
+    private struct CacheMetadata: Codable {
+        let version: Int
+        let timestamp: Date
+        let recordCount: Int
     }
     
     private func loadRecordsFromCache() -> [ExerciseRecord]? {
         let cacheKey = getCacheKey(for: exercise.id)
-        guard let cachedData = UserDefaults.standard.data(forKey: cacheKey),
-              let cachedRecords = try? JSONDecoder().decode([ExerciseRecord].self, from: cachedData) else {
+        let metadataKey = "\(cacheKey)_metadata"
+        
+        log("\n========== 读取缓存 ==========")
+        
+        // 检查缓存元数据
+        guard let metadataData = UserDefaults.standard.data(forKey: metadataKey),
+              let metadata = try? JSONDecoder().decode(CacheMetadata.self, from: metadataData) else {
+            log("❌ 未找到缓存元数据")
             return nil
         }
+        
+        // 验证缓存版本
+        guard metadata.version == cacheVersion else {
+            log("❌ 缓存版本不匹配")
+            clearCache()
+            return nil
+        }
+        
+        // 检查缓存是否过期
+        let cacheAge = Date().timeIntervalSince(metadata.timestamp)
+        if cacheAge > maxCacheAge {
+            log("❌ 缓存已过期 (年龄: \(Int(cacheAge/3600))小时)")
+            clearCache()
+            return nil
+        }
+        
+        // 读取缓存数据
+        guard let cachedData = UserDefaults.standard.data(forKey: cacheKey),
+              let cachedRecords = try? JSONDecoder().decode([ExerciseRecord].self, from: cachedData) else {
+            log("❌ 缓存数据读取失败")
+            return nil
+        }
+        
+        log("""
+            ✅ 成功读取缓存:
+            - 版本: v\(metadata.version)
+            - 年龄: \(Int(cacheAge/60))分钟
+            - 记录数: \(cachedRecords.count)
+            """)
+        
         return cachedRecords
     }
     
     private func saveRecordsToCache(_ records: [ExerciseRecord]) {
         let cacheKey = getCacheKey(for: exercise.id)
-        if let encodedData = try? JSONEncoder().encode(records) {
-            UserDefaults.standard.set(encodedData, forKey: cacheKey)
-            lastLoadTime = Date()
+        let metadataKey = "\(cacheKey)_metadata"
+        
+        // 检查是否需要更新缓存
+        if let lastUpdate = lastLoadTime,
+           Date().timeIntervalSince(lastUpdate) < minCacheInterval {
+            log("⏳ 缓存更新间隔太短，跳过")
+            return
         }
+        
+        // 限制缓存记录数量并转换为数组
+        let recordsToCache = Array(records.prefix(maxCacheRecords))
+        
+        // 保存记录数据
+        guard let encodedData = try? JSONEncoder().encode(recordsToCache) else {
+            log("❌ 记录编码失败")
+            return
+        }
+        
+        // 保存元数据
+        let metadata = CacheMetadata(
+            version: cacheVersion,
+            timestamp: Date(),
+            recordCount: recordsToCache.count
+        )
+        
+        guard let metadataData = try? JSONEncoder().encode(metadata) else {
+            log("❌ 元数据编码失败")
+            return
+        }
+        
+        // 写入缓存
+        UserDefaults.standard.set(encodedData, forKey: cacheKey)
+        UserDefaults.standard.set(metadataData, forKey: metadataKey)
+        lastLoadTime = Date()
+        
+        log("""
+            💾 缓存更新成功:
+            - 记录数: \(recordsToCache.count)
+            - 数据大小: \(ByteCountFormatter.string(fromByteCount: Int64(encodedData.count), countStyle: .file))
+            """)
+    }
+    
+    private func clearCache() {
+        let cacheKey = getCacheKey(for: exercise.id)
+        let metadataKey = "\(cacheKey)_metadata"
+        
+        UserDefaults.standard.removeObject(forKey: cacheKey)
+        UserDefaults.standard.removeObject(forKey: metadataKey)
+        
+        log("🧹 缓存已清理")
     }
     
     // 添加加载更多函数
