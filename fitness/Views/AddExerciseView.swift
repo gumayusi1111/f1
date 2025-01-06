@@ -42,6 +42,10 @@ struct AddExerciseView: View {
     @State private var nameError: String? = nil  // 添加错误状态
     @State private var isCheckingName = false    // 添加检查状态
     
+    // 在 AddExerciseView 结构体顶部添加状态
+    @State private var isOffline = false
+    @AppStorage("pendingExercises") private var pendingExercisesData: Data = Data()
+    
     init(onExerciseAdded: @escaping (Exercise) -> Void) {
         self.onExerciseAdded = onExerciseAdded
     }
@@ -266,120 +270,165 @@ struct AddExerciseView: View {
     
     // MARK: - Functions
     private func saveExercise() {
-        print("\n========== 开始保存流程 ==========")
-        print("📋 表单状态检查:")
-        print("- 名称: \(name) (长度: \(name.count))")
-        print("- 类别: \(selectedCategory ?? "未选择")")
-        print("- 单位: \(selectedUnit ?? "未选择")")
-        print("- 表单验证结果: \(isFormValid ? "✅ 通过" : "❌ 未通过")")
-        
-        guard isFormValid else {
-            print("❌ 表单验证未通过，终止保存")
-            print("========== 保存终止 ==========\n")
-            return
-        }
-        
-        // 添加名称重复检查
         Task {
-            isCheckingName = true
-            if await checkNameDuplicate() {
-                nameError = "该项目名称已存在"
-                isCheckingName = false
-                return
-            }
-            isCheckingName = false
+            guard isFormValid else { return }
             
-            // 添加按钮动画
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                saveScale = 0.95
-            }
+            // 创建运动项目
+            let exercise = Exercise(
+                id: UUID().uuidString,
+                name: name,
+                category: selectedCategory!,
+                description: description,
+                notes: notes,
+                isSystemPreset: false,
+                unit: selectedUnit,
+                createdAt: Date(),
+                updatedAt: Date(),
+                maxRecord: nil,
+                lastRecordDate: nil
+            )
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                    saveScale = 1
-                }
-            }
+            print("\n========== 开始保存训练项目 ==========")
+            print("📱 检查网络状态...")
             
-            Task {
-                isLoading = true
-                print("\n========== 开始保存训练项目 ==========")
-                print("📝 项目名称: \(name)")
-                print("📑 类别: \(selectedCategory ?? "未选择")")
-                print("📏 单位: \(selectedUnit ?? "未选择")")
-                
-                let exercise = Exercise(
-                    id: UUID().uuidString,
-                    name: name,
-                    category: selectedCategory!,
-                    description: description,
-                    notes: notes,
-                    isSystemPreset: false,
-                    unit: selectedUnit,
-                    createdAt: Date(),
-                    updatedAt: Date(),
-                    maxRecord: nil,
-                    lastRecordDate: nil
-                )
-                
-                // 保存到 Firestore
+            // 检查网络连接
+            do {
                 let db = Firestore.firestore()
+                try await db.collection("users").document("test").getDocument(source: .server)
+                isOffline = false
+                print("✅ 网络连接正常")
+                
+                // 添加在线保存逻辑
+                print("🔄 开始在线保存...")
                 guard !userId.isEmpty else {
-                    showError = true
-                    errorMessage = "用户ID不存在"
-                    isLoading = false
                     print("❌ 保存失败: 用户ID不存在")
-                    return
+                    throw ExerciseError.invalidUserId
                 }
                 
-                print("🔄 正在保存到 Firestore...")
+                try await db.collection("users")
+                    .document(userId)
+                    .collection("exercises")
+                    .document(exercise.id)
+                    .setData(exercise.dictionary)
                 
-                do {
-                    try await db.collection("users")
-                        .document(userId)
-                        .collection("exercises")
-                        .document(exercise.id)
-                        .setData(exercise.dictionary)
-                    
-                    // 1. 触觉反馈
-                    let notificationGenerator = UINotificationFeedbackGenerator()
-                    notificationGenerator.prepare()
-                    notificationGenerator.notificationOccurred(.success)
-                    
-                    // 2. 播放系统音效
-                    AudioServicesPlaySystemSound(1004)
-                    
-                    // 3. 显示成功动画
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        showSuccessToast = true
-                        showSaveAnimation = true
-                    }
-                    
-                    onExerciseAdded(exercise)
-                    
-                    // 延迟关闭动画和视图
-                    try await Task.sleep(for: .seconds(1.5))
-                    
-                    withAnimation {
-                        showSuccessToast = false
-                        showSaveAnimation = false
-                    }
-                    
-                    try await Task.sleep(for: .seconds(0.3))
-                    isLoading = false
-                    dismiss()
-                    
-                    print("✅ 保存成功")
-                    print("========== 保存结束 ==========\n")
-                    
-                } catch {
-                    showError = true
-                    errorMessage = "保存失败: \(error.localizedDescription)"
-                    isLoading = false
-                    print("❌ 保存失败: \(error.localizedDescription)")
-                    print("========== 保存失败 ==========\n")
+                print("✅ 在线保存成功")
+                
+                // 触觉反馈
+                let notificationGenerator = UINotificationFeedbackGenerator()
+                notificationGenerator.prepare()
+                notificationGenerator.notificationOccurred(.success)
+                
+                // 播放系统音效
+                AudioServicesPlaySystemSound(1004)
+                
+                // 回调通知
+                onExerciseAdded(exercise)
+                
+                // 显示成功动画
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    showSuccessToast = true
+                    showSaveAnimation = true
                 }
+                
+                // 延迟关闭
+                try await Task.sleep(for: .seconds(1.5))
+                withAnimation {
+                    showSuccessToast = false
+                    showSaveAnimation = false
+                }
+                isLoading = false
+                dismiss()
+                
+                print("========== 保存完成 ==========\n")
+                
+            } catch {
+                isOffline = true
+                print("⚠️ 当前处于离线状态或保存失败")
+                print("错误信息: \(error.localizedDescription)")
+                
+                // 保存到待处理队列
+                var pendingExercises = getPendingExercises()
+                pendingExercises.append(exercise)
+                savePendingExercises(pendingExercises)
+                
+                // 显示成功提示
+                showOfflineSuccess()
+                print("📝 已保存到离线队列")
+                print("待同步项目数: \(pendingExercises.count)")
             }
         }
+    }
+    
+    // 添加辅助函数
+    private func getPendingExercises() -> [Exercise] {
+        guard let exercises = try? JSONDecoder().decode([Exercise].self, from: pendingExercisesData) else {
+            return []
+        }
+        return exercises
+    }
+    
+    private func savePendingExercises(_ exercises: [Exercise]) {
+        if let data = try? JSONEncoder().encode(exercises) {
+            pendingExercisesData = data
+        }
+    }
+    
+    private func showOfflineSuccess() {
+        // 使用现有的成功动画
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+            showSuccessToast = true
+            showSaveAnimation = true
+        }
+        
+        // 延迟关闭动画
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation {
+                showSuccessToast = false
+                showSaveAnimation = false
+            }
+            isLoading = false
+            dismiss()
+        }
+    }
+    
+    // 添加同步函数 (在恢复网络时调用)
+    private func syncPendingExercises() async {
+        let pendingExercises = getPendingExercises()
+        guard !pendingExercises.isEmpty else { return }
+        
+        print("\n========== 开始同步离线数据 ==========")
+        print("📝 待同步项目数: \(pendingExercises.count)")
+        
+        let db = Firestore.firestore()
+        var syncedCount = 0
+        
+        for exercise in pendingExercises {
+            do {
+                try await db.collection("users")
+                    .document(userId)
+                    .collection("exercises")
+                    .document(exercise.id)
+                    .setData(exercise.dictionary)
+                syncedCount += 1
+                print("✅ 同步成功: \(exercise.name)")
+            } catch {
+                print("❌ 同步失败: \(exercise.name)")
+                print("错误信息: \(error.localizedDescription)")
+            }
+        }
+        
+        print("📊 同步结果:")
+        print("- 成功: \(syncedCount)")
+        print("- 失败: \(pendingExercises.count - syncedCount)")
+        
+        // 清除已同步的数据
+        if syncedCount == pendingExercises.count {
+            pendingExercisesData = Data()
+            print("🧹 清理离线队列")
+        }
+        
+        print("========== 同步结束 ==========\n")
     }
     
     // 添加名称重复检查函数
@@ -526,6 +575,18 @@ private func getCategoryColor(_ category: String) -> Color {
     case "核心": return .pink
     case "有氧": return .cyan
     default: return .blue
+    }
+}
+
+// 添加错误类型
+enum ExerciseError: Error {
+    case invalidUserId
+    
+    var localizedDescription: String {
+        switch self {
+        case .invalidUserId:
+            return "用户ID不存在"
+        }
     }
 }
 
