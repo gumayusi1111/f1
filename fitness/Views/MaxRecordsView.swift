@@ -541,9 +541,10 @@ struct MaxRecordsView: View {
         }
     }
     
-    // 过滤后的PR记录
+    // 修改 filteredPRs 计算属性
     private var filteredPRs: [Exercise] {
-        recentPRs.filter { exercise in
+        // 1. 先按照搜索和类别过滤
+        let filtered = recentPRs.filter { exercise in
             let matchesSearch = prSearchText.isEmpty || 
                 exercise.name.localizedCaseInsensitiveContains(prSearchText)
             
@@ -552,6 +553,24 @@ struct MaxRecordsView: View {
                 exercise.category == selectedPRCategory
             
             return matchesSearch && matchesCategory
+        }
+        
+        // 2. 按照是否有记录排序
+        return filtered.sorted { first, second in
+            // 如果第一个有记录而第二个没有，第一个排在前面
+            if first.maxRecord != nil && second.maxRecord == nil {
+                return true
+            }
+            // 如果第一个没有记录而第二个有，第二个排在前面
+            if first.maxRecord == nil && second.maxRecord != nil {
+                return false
+            }
+            // 如果都有记录，按最近记录时间排序
+            if let firstDate = first.lastRecordDate, let secondDate = second.lastRecordDate {
+                return firstDate > secondDate
+            }
+            // 如果都没有记录，按名称排序
+            return first.name < second.name
         }
     }
     
