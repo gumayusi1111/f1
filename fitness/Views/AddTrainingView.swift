@@ -188,22 +188,51 @@ struct AddTrainingView: View {
     // 加载训练项目
     private func loadExercises() {
         let db = Firestore.firestore()
+        
+        // 创建 DispatchGroup 来协调两个异步请求
+        let group = DispatchGroup()
+        var allExercises: [Exercise] = []
+        
+        // 加载系统预设项目
+        group.enter()
+        db.collection("systemExercises")
+            .getDocuments { snapshot, error in
+                defer { group.leave() }
+                
+                if let documents = snapshot?.documents {
+                    let systemExercises = documents.compactMap { doc in
+                        try? doc.data(as: Exercise.self)
+                    }
+                    allExercises.append(contentsOf: systemExercises)
+                }
+            }
+        
+        // 加载用户自定义项目
+        group.enter()
         db.collection("users")
             .document(userId)
             .collection("exercises")
-            .getDocuments(source: .default) { snapshot, error in
+            .getDocuments { snapshot, error in
+                defer { group.leave() }
+                
                 if let error = error {
-                    errorMessage = error.localizedDescription
-                    showError = true
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
                     return
                 }
                 
                 if let documents = snapshot?.documents {
-                    self.exercises = documents.compactMap { doc in
+                    let userExercises = documents.compactMap { doc in
                         try? doc.data(as: Exercise.self)
                     }
+                    allExercises.append(contentsOf: userExercises)
                 }
             }
+        
+        // 当两个请求都完成时更新 UI
+        group.notify(queue: .main) {
+            self.exercises = allExercises
+        }
     }
     
     private func addTraining() {
