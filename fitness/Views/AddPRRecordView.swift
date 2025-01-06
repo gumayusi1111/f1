@@ -26,6 +26,10 @@ struct AddPRRecordView: View {
     @State private var isLoadingRecords = false
     @State private var lastLoadTime: Date?
     private let cacheExpirationInterval: TimeInterval = 300 // 缓存5分钟过期
+    @State private var lastDocument: DocumentSnapshot? // 用于分页
+    @State private var isLoadingMore = false // 是否正在加载更多
+    @State private var hasMoreRecords = true // 是否还有更多记录
+    private let pageSize = 10 // 每页加载记录数
     var onRecordUpdate: (() -> Void)?
     
     // 修改滚轮选择器的范围计算
@@ -569,7 +573,17 @@ struct AddPRRecordView: View {
     private func loadRecords(forceRefresh: Bool = false) {
         guard !isLoadingRecords else { return }
         
-        // 如果不是强制刷新且缓存未过期,使用缓存数据
+        log("\n========== 开始加载记录 ==========")
+        log("强制刷新: \(forceRefresh)")
+        
+        // 如果是强制刷新,重置分页状态
+        if forceRefresh {
+            lastDocument = nil
+            records = []
+            hasMoreRecords = true
+        }
+        
+        // 检查缓存
         if !forceRefresh,
            let lastLoad = lastLoadTime,
            Date().timeIntervalSince(lastLoad) < cacheExpirationInterval,
@@ -580,81 +594,79 @@ struct AddPRRecordView: View {
         }
         
         isLoadingRecords = true
-        log("\n========== 开始加载记录 ==========")
         log("运动项目: \(exercise.name) (ID: \(exercise.id))")
-        log("当前最大记录: \(exercise.maxRecord ?? 0) \(exercise.unit ?? "")")
         
-        let db = Firestore.firestore()
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
             log("❌ 用户ID不存在", type: "ERROR")
+            isLoadingRecords = false
             return
         }
-        log("用户ID: \(userId)")
         
-        let recordsRef = db.collection("users")
+        var query = Firestore.firestore()
+            .collection("users")
             .document(userId)
             .collection("exercises")
             .document(exercise.id)
             .collection("records")
             .order(by: "date", descending: true)
+            .limit(to: pageSize)
         
-        log("📝 开始查询记录: users/\(userId)/exercises/\(exercise.id)/records")
+        // 如果有上一页的最后一条记录,从那里开始查询
+        if let lastDoc = lastDocument {
+            query = query.start(afterDocument: lastDoc)
+        }
         
-        recordsRef.getDocuments { snapshot, error in
+        log("📝 查询参数:")
+        log("- 页大小: \(pageSize)")
+        log("- 是否有上一页: \(lastDocument != nil)")
+        
+        query.getDocuments { snapshot, error in
             defer { self.isLoadingRecords = false }
             
             if let error = error {
-                self.log("❌ 加载记录失败: \(error.localizedDescription)", type: "ERROR")
+                log("❌ 加载失败: \(error.localizedDescription)", type: "ERROR")
                 return
             }
             
-            self.log("📊 查询结果: 找到 \(snapshot?.documents.count ?? 0) 条记录")
+            guard let snapshot = snapshot else {
+                log("❌ 未获取到数据", type: "ERROR")
+                return
+            }
+            
+            log("📊 本次查询结果: \(snapshot.documents.count) 条记录")
+            
+            // 更新是否还有更多记录
+            self.hasMoreRecords = snapshot.documents.count == self.pageSize
+            log("是否还有更多记录: \(self.hasMoreRecords)")
+            
+            // 保存最后一条记录用于下次查询
+            self.lastDocument = snapshot.documents.last
             
             // 转换记录
-            self.records = snapshot?.documents.compactMap { document in
-                self.log("处理记录: \(document.documentID)")
-                
+            let newRecords = snapshot.documents.compactMap { document -> ExerciseRecord? in
                 let data = document.data()
-                
-                // 详细记录每个字段的解析
-                let id = data["id"] as? String
-                let value = data["value"] as? Double
-                let timestamp = data["date"] as? Timestamp
-                let isPR = data["isPR"] as? Bool
-                
-                self.log("""
-                    记录详情:
-                    - ID: \(id ?? "nil")
-                    - 值: \(value ?? 0)
-                    - 时间戳: \(timestamp?.dateValue().description ?? "nil")
-                    - 是否PR: \(isPR ?? false)
-                    """)
-                
-                guard let id = id,
-                      let value = value,
-                      let date = timestamp?.dateValue(),
-                      let isPR = isPR else {
-                    self.log("❌ 记录数据格式错误: \(document.documentID)", type: "ERROR")
+                guard let id = data["id"] as? String,
+                      let value = data["value"] as? Double,
+                      let date = (data["date"] as? Timestamp)?.dateValue(),
+                      let isPR = data["isPR"] as? Bool else {
+                    log("❌ 记录格式错误: \(document.documentID)", type: "ERROR")
                     return nil
                 }
-                
                 return ExerciseRecord(id: id, value: value, date: date, isPR: isPR)
-            } ?? []
+            }
             
-            self.log("✅ 成功加载并转换 \(self.records.count) 条记录")
+            log("✅ 成功转换 \(newRecords.count) 条记录")
             
-            // 验证记录排序
-            if !self.records.isEmpty {
-                self.log("""
-                    最新记录:
-                    - 时间: \(self.records[0].date)
-                    - 值: \(self.records[0].value)
-                    - 是否PR: \(self.records[0].isPR)
-                    """)
+            // 如果是刷新,替换全部记录;否则追加新记录
+            if forceRefresh {
+                self.records = newRecords
+            } else {
+                self.records.append(contentsOf: newRecords)
             }
             
             // 保存到缓存
             self.saveRecordsToCache(self.records)
+            log("💾 已更新缓存,当前总记录数: \(self.records.count)")
         }
     }
     
@@ -837,6 +849,13 @@ struct AddPRRecordView: View {
             UserDefaults.standard.set(encodedData, forKey: cacheKey)
             lastLoadTime = Date()
         }
+    }
+    
+    // 添加加载更多函数
+    private func loadMoreRecords() {
+        guard hasMoreRecords && !isLoadingRecords else { return }
+        log("\n========== 加载更多记录 ==========")
+        loadRecords()
     }
 }
 
