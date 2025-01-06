@@ -212,6 +212,7 @@ struct CalendarView: View {
                         calendar: calendar,
                         trainingRecords: trainingRecords,
                         dateFormatter: dateFormatter,
+                        trainingParts: trainingParts,
                         currentSwipedDate: $currentSwipedDate
                     )
                     Divider()
@@ -238,6 +239,7 @@ struct CalendarView: View {
             selectedDate = newDate
             updateWeekDates()
             loadTrainingRecords()
+            loadTrainingParts()
         }
     }
     
@@ -246,6 +248,7 @@ struct CalendarView: View {
             selectedDate = newDate
             updateWeekDates()
             loadTrainingRecords()
+            loadTrainingParts()
         }
     }
     
@@ -429,16 +432,15 @@ struct CalendarView: View {
     
     private func loadTrainingParts() {
         let db = Firestore.firestore()
-        // 获取当前月份的开始和结束日期
-        let calendar = Calendar.current
-        let startDate = calendar.date(from: calendar.dateComponents([.year, .month], from: selectedDate))!
-        let endDate = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: startDate)!
+        // 获取当前周的开始和结束日期
+        let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate))!
+        let endOfWeek = calendar.date(byAdding: .day, value: 7, to: startOfWeek)!
         
         db.collection("users")
             .document(userId)
             .collection("trainingParts")
-            .whereField("date", isGreaterThanOrEqualTo: startDate)
-            .whereField("date", isLessThanOrEqualTo: endDate)
+            .whereField("date", isGreaterThanOrEqualTo: startOfWeek)
+            .whereField("date", isLessThan: endOfWeek)
             .getDocuments { snapshot, error in
                 if let documents = snapshot?.documents {
                     for doc in documents {
@@ -493,6 +495,7 @@ struct DayCell: View {
     let calendar: Calendar
     let trainingRecords: [String: [TrainingRecord]]
     let dateFormatter: DateFormatter
+    let trainingParts: [String: String]
     
     @Binding var currentSwipedDate: Date?
     @State private var offset: CGFloat = 0
@@ -576,49 +579,45 @@ struct DayCell: View {
                         )
                         .transition(.scale.combined(with: .opacity))
                 } else {
-                    Button(action: onTap) {
-                        HStack(spacing: 6) {
-                            if hasTraining {
-                                Text("已训练")
-                                    .foregroundColor(.green)
-                                    .transition(.scale.combined(with: .opacity))
-                            } else {
-                                Text("训练日")
-                                    .foregroundColor(.white)
-                            }
-                            Image(systemName: hasTraining ? "checkmark.circle.fill" : "figure.run")
-                                .font(.system(size: 14, weight: .semibold))
-                                .transition(.scale.combined(with: .opacity))
-                        }
-                        .font(.system(size: 14, weight: .medium))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(hasTraining ? Color(.systemGreen).opacity(0.1) : Color.blue)
-                        )
-                        .foregroundColor(hasTraining ? .green : .white)
-                    }
-                    .buttonStyle(ScaleButtonStyle())
-                    .padding(.trailing, 5)
-                }
-                
-                if hasTraining, 
-                   let records = trainingRecords[dateFormatter.string(from: date)] {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(records) { record in
-                            Text(record.bodyPart)
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
+                    HStack(spacing: 8) {
+                        // 显示训练部位
+                        if let bodyPart = trainingParts[dateFormatter.string(from: date)] {
+                            Text(bodyPart)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.blue)
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
+                                .padding(.vertical, 4)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(Color.gray.opacity(0.1))
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.blue.opacity(0.1))
                                 )
                         }
+                        
+                        Button(action: onTap) {
+                            HStack(spacing: 6) {
+                                if hasTraining {
+                                    Text("已训练")
+                                        .foregroundColor(.green)
+                                        .transition(.scale.combined(with: .opacity))
+                                } else {
+                                    Text("训练日")
+                                        .foregroundColor(.white)
+                                }
+                                Image(systemName: hasTraining ? "checkmark.circle.fill" : "figure.run")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                            .font(.system(size: 14, weight: .medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(hasTraining ? Color(.systemGreen).opacity(0.1) : Color.blue)
+                            )
+                            .foregroundColor(hasTraining ? .green : .white)
+                        }
+                        .buttonStyle(ScaleButtonStyle())
                     }
-                    .padding(.top, 4)
                 }
             }
             .padding(.horizontal, 16)
