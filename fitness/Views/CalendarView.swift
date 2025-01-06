@@ -34,6 +34,8 @@ struct CalendarView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     
+    @State private var trainingParts: [String: String] = [:]
+    
     var body: some View {
         VStack(spacing: 16) {
             headerSection
@@ -49,6 +51,7 @@ struct CalendarView: View {
             updateWeekDates()
             loadTrainingRecords()
             loadRestDays()
+            loadTrainingParts()
             
             if !hasShownCalendarTutorial {
                 showingTutorial = true
@@ -423,6 +426,59 @@ struct CalendarView: View {
         errorMessage = message
         showError = true
     }
+    
+    private func loadTrainingParts() {
+        let db = Firestore.firestore()
+        // 获取当前月份的开始和结束日期
+        let calendar = Calendar.current
+        let startDate = calendar.date(from: calendar.dateComponents([.year, .month], from: selectedDate))!
+        let endDate = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: startDate)!
+        
+        db.collection("users")
+            .document(userId)
+            .collection("trainingParts")
+            .whereField("date", isGreaterThanOrEqualTo: startDate)
+            .whereField("date", isLessThanOrEqualTo: endDate)
+            .getDocuments { snapshot, error in
+                if let documents = snapshot?.documents {
+                    for doc in documents {
+                        if let bodyPart = doc.data()["bodyPart"] as? String,
+                           let date = (doc.data()["date"] as? Timestamp)?.dateValue() {
+                            trainingParts[date.formatDate()] = bodyPart
+                        }
+                    }
+                }
+            }
+    }
+    
+    // 在日历单元格中显示训练部位
+    private func calendarCell(date: Date) -> some View {
+        VStack {
+            Text("\(calendar.component(.day, from: date))")
+                .font(.system(size: 16, weight: .medium))
+            
+            if let bodyPart = trainingParts[date.formatDate()] {
+                Text(bodyPart)
+                    .font(.system(size: 12))
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(4)
+            }
+            
+            // ... 其他现有的训练标记
+        }
+    }
+}
+
+// 添加日期格式化扩展
+extension Date {
+    func formatDate() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: self)
+    }
 }
 
 // 美化日期单元格视图
@@ -669,27 +725,6 @@ struct DayCell: View {
 }
 
 // 添加自定义按钮样式
-struct ScaleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .animation(.easeInOut(duration: 0.2), value: configuration.isPressed)
-    }
-}
-
-// 添加自定义过渡动画
-extension AnyTransition {
-    static var scaleAndFade: AnyTransition {
-        .asymmetric(
-            insertion: .scale(scale: 0.8).combined(with: .opacity)
-                .animation(.spring(response: 0.3, dampingFraction: 0.7)),
-            removal: .scale(scale: 0.6).combined(with: .opacity)
-                .animation(.easeOut(duration: 0.2))
-        )
-    }
-}
-
-// 添加悬停按钮样式
 struct HoverButtonStyle: ButtonStyle {
     @State private var isHovered = false
     

@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseFirestore
+import CoreHaptics
 
 struct AddTrainingView: View {
     let date: Date
@@ -19,14 +20,63 @@ struct AddTrainingView: View {
     @State private var errorMessage = ""
     @State private var exercises: [Exercise] = []
     @State private var todayRecords: [TrainingRecord] = [] // 今日记录
+    @State private var engine: CHHapticEngine?
+    @AppStorage("todayTrainingPart") private var todayTrainingPart: String = "" // 存储今日训练部位
     
-    let bodyParts = ["胸部", "背部", "腿部", "肩部", "手臂", "核心"]
+    let bodyParts = ["全部", "胸部", "背部", "腿部", "肩部", "手臂", "核心"]
     var onTrainingAdded: () -> Void
+    
+    init(date: Date, onTrainingAdded: @escaping () -> Void) {
+        self.date = date
+        self.onTrainingAdded = onTrainingAdded
+        _selectedBodyPart = State(initialValue: todayTrainingPart.isEmpty ? "全部" : todayTrainingPart)
+    }
     
     private var filteredExercises: [Exercise] {
         exercises.filter { exercise in
-            (searchText.isEmpty || exercise.name.localizedCaseInsensitiveContains(searchText)) &&
-            exercise.category == selectedBodyPart
+            let matchesSearch = searchText.isEmpty || 
+                exercise.name.localizedCaseInsensitiveContains(searchText)
+            let matchesCategory = selectedBodyPart == "全部" || 
+                exercise.category == selectedBodyPart
+            return matchesSearch && matchesCategory
+        }
+    }
+    
+    private func clearAllInputs() {
+        searchText = ""
+        selectedExercise = nil
+        sets = 3
+        reps = 12
+        weight = ""
+        notes = ""
+    }
+    
+    private func prepareHaptics() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        
+        do {
+            engine = try CHHapticEngine()
+            try engine?.start()
+        } catch {
+            print("Haptics error: \(error.localizedDescription)")
+        }
+    }
+    
+    private func playHapticFeedback() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        
+        var events = [CHHapticEvent]()
+        let intensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.5)
+        let sharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)
+        let event = CHHapticEvent(eventType: .hapticTransient, parameters: [intensity, sharpness], relativeTime: 0)
+        events.append(event)
+        
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            let player = try engine?.makePlayer(with: pattern)
+            try player?.start(atTime: 0)
+        } catch {
+            print("Failed to play haptic pattern: \(error.localizedDescription)")
         }
     }
     
@@ -40,7 +90,16 @@ struct AddTrainingView: View {
                             BodyPartButton(
                                 part: part,
                                 isSelected: selectedBodyPart == part,
-                                action: { withAnimation { selectedBodyPart = part } }
+                                action: { 
+                                    withAnimation { 
+                                        selectedBodyPart = part 
+                                        playHapticFeedback()
+                                        if part != "全部" {
+                                            todayTrainingPart = part
+                                            saveTrainingPart()
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
@@ -55,8 +114,11 @@ struct AddTrainingView: View {
                 }
                 
                 // 搜索栏
-                TrainingSearchBar(text: $searchText)
-                    .padding()
+                TrainingSearchBar(
+                    text: $searchText,
+                    onClear: clearAllInputs
+                )
+                .padding()
                 
                 // 训练项目列表
                 ScrollView {
@@ -111,6 +173,7 @@ struct AddTrainingView: View {
             .navigationBarItems(trailing: Button("取消") { dismiss() })
             .background(Color(.systemGroupedBackground))
             .onAppear {
+                prepareHaptics()
                 loadExercises()
                 loadTodayRecords()
             }
@@ -204,6 +267,28 @@ struct AddTrainingView: View {
                             date: (data["date"] as? Timestamp)?.dateValue() ?? Date()
                         )
                     }
+                }
+            }
+    }
+    
+    private func saveTrainingPart() {
+        guard selectedBodyPart != "全部" else { return }
+        
+        let db = Firestore.firestore()
+        let trainingPartData: [String: Any] = [
+            "bodyPart": selectedBodyPart,
+            "date": date,
+            "userId": userId
+        ]
+        
+        db.collection("users")
+            .document(userId)
+            .collection("trainingParts")
+            .document(date.formatDate())
+            .setData(trainingPartData) { error in
+                if let error = error {
+                    errorMessage = "保存训练部位失败: \(error.localizedDescription)"
+                    showError = true
                 }
             }
     }
@@ -302,6 +387,7 @@ struct ExerciseCard: View {
 
 struct TrainingSearchBar: View {
     @Binding var text: String
+    let onClear: () -> Void
     
     var body: some View {
         HStack {
@@ -309,7 +395,7 @@ struct TrainingSearchBar: View {
                 .foregroundColor(.secondary)
             TextField("搜索训练项目", text: $text)
             if !text.isEmpty {
-                Button(action: { text = "" }) {
+                Button(action: onClear) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
                 }
