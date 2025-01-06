@@ -101,7 +101,7 @@ struct AddTrainingView: View {
     }
     
     private func hideTrainingDetail() {
-        withAnimation(.spring(response: 0.3)) {
+        withAnimation(.easeOut(duration: 0.2)) {
             selectedExercise = nil
         }
     }
@@ -160,8 +160,10 @@ struct AddTrainingView: View {
                                         hideTrainingDetail()
                                         return
                                     }
+                                    // 先隐藏当前详情
                                     hideTrainingDetail()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    // 短暂延迟后显示新选择的项目
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                         withAnimation(.spring(response: 0.3)) {
                                             selectedExercise = exercise
                                         }
@@ -173,6 +175,7 @@ struct AddTrainingView: View {
                     .padding()
                 }
                 .simultaneousGesture(
+                    // 添加滑动手势，当用户滑动列表时收起详情
                     DragGesture(minimumDistance: 5)
                         .onChanged { _ in
                             hideTrainingDetail()
@@ -187,9 +190,17 @@ struct AddTrainingView: View {
                         sets: $sets,
                         reps: $reps,
                         weight: $weight,
-                        notes: $notes
+                        notes: $notes,
+                        onDismiss: {
+                            hideTrainingDetail()
+                        }
                     )
-                    .transition(.move(edge: .bottom))
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .move(edge: .bottom).combined(with: .opacity)
+                        )
+                    )
                 }
                 
                 // 完成按钮
@@ -570,10 +581,31 @@ struct TrainingDetailSection: View {
     @Binding var reps: Int
     @Binding var weight: String
     @Binding var notes: String
+    @GestureState private var dragState = DragState.inactive
+    @State private var dragOffset: CGFloat = 0
+    let dismissThreshold: CGFloat = 100 // 触发关闭的阈值
+    var onDismiss: () -> Void
+    
+    enum DragState {
+        case inactive
+        case dragging(translation: CGFloat)
+        
+        var translation: CGFloat {
+            switch self {
+            case .inactive:
+                return 0
+            case .dragging(let translation):
+                return translation
+            }
+        }
+    }
     
     // 添加状态变量用于整数和小数部分选择
     @State private var selectedIntegerPart: Int = 0
     @State private var selectedDecimalPart: Int = 0
+    
+    // 添加状态来控制视图的显示
+    @State private var isDismissing = false
     
     // 添加整数范围计算属性
     private var integerRange: [Int] {
@@ -701,6 +733,37 @@ struct TrainingDetailSection: View {
         .background(Color(.systemBackground))
         .cornerRadius(20, corners: [.topLeft, .topRight])
         .shadow(color: .black.opacity(0.1), radius: 10, y: -5)
+        .offset(y: max(0, dragState.translation + dragOffset))
+        .opacity(isDismissing ? 0 : 1) // 添加透明度动画
+        .gesture(
+            DragGesture()
+                .updating($dragState) { value, state, _ in
+                    // 只在向下拖动时响应
+                    if value.translation.height > 0 {
+                        state = .dragging(translation: value.translation.height)
+                    }
+                }
+                .onEnded { value in
+                    let snapDistance = value.translation.height
+                    if snapDistance > dismissThreshold {
+                        // 先设置消失动画
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            isDismissing = true
+                            dragOffset = UIScreen.main.bounds.height
+                        }
+                        // 延迟调用实际的 dismiss
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            onDismiss()
+                        }
+                    } else {
+                        // 回弹动画
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
+        .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7), value: dragState.translation)
     }
 }
 
