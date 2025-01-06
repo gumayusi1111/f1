@@ -1,5 +1,7 @@
 import SwiftUI
 import FirebaseFirestore
+import AudioToolbox
+import UserNotifications
 
 struct DayTrainingView: View {
     let date: Date
@@ -45,6 +47,12 @@ struct DayTrainingView: View {
             return Date().timeIntervalSince(timestamp) < 24 * 60 * 60
         }
     }
+    
+    // 在 DayTrainingView 中添加状态变量
+    @State private var showingRestTimer = false
+    @State private var remainingTime: TimeInterval = 60  // 默认60秒
+    @State private var timer: Timer?
+    @State private var isTimerRunning = false
     
     init(date: Date) {
         self.date = date
@@ -100,6 +108,20 @@ struct DayTrainingView: View {
                         .padding()
                         .frame(maxWidth: .infinity)
                         .background(Color.blue)
+                        .cornerRadius(12)
+                    }
+                    
+                    // 添加间歇计时按钮
+                    Button(action: { showingRestTimer = true }) {
+                        HStack {
+                            Image(systemName: isTimerRunning ? "timer" : "timer.circle.fill")
+                            Text(isTimerRunning ? formatTime(remainingTime) : "间歇计时")
+                        }
+                        .font(.headline)
+                        .foregroundColor(isTimerRunning ? .orange : .blue)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(isTimerRunning ? Color.orange.opacity(0.1) : Color.blue.opacity(0.1))
                         .cornerRadius(12)
                     }
                 }
@@ -172,6 +194,9 @@ struct DayTrainingView: View {
                 AddTrainingView(date: date) {
                     // 训练添加完成的回调
                 }
+            }
+            .sheet(isPresented: $showingRestTimer) {
+                RestTimerView(isPresented: $showingRestTimer, remainingTime: $remainingTime, isTimerRunning: $isTimerRunning)
             }
             .onAppear {
                 loadTrainingPart()
@@ -560,6 +585,13 @@ struct DayTrainingView: View {
     private func updateHasMorePages() {
         hasMorePages = trainings.count > currentPage * pageSize
     }
+    
+    // 添加格式化时间的辅助函数
+    private func formatTime(_ timeInterval: TimeInterval) -> String {
+        let minutes = Int(timeInterval) / 60
+        let seconds = Int(timeInterval) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
 }
 
 // 训练记录行视图
@@ -698,6 +730,252 @@ struct SwipeView<Content: View>: View {
                             }
                         }
                 )
+        }
+    }
+}
+
+// 优化计时器视图
+struct RestTimerView: View {
+    @Binding var isPresented: Bool
+    @Binding var remainingTime: TimeInterval
+    @Binding var isTimerRunning: Bool
+    @State private var selectedSeconds = 60  // 初始值改为秒
+    @State private var currentTimer: Timer?
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 30) {
+                // 传入 selectedSeconds 而不是分钟
+                TimePickerView(selectedSeconds: $selectedSeconds)
+                    .frame(height: 330)
+                    .padding(.top, 20)
+                
+                Button(action: startTimer) {
+                    Text("开始计时")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(height: 50)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue)
+                        .cornerRadius(12)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 10)
+            }
+            .navigationTitle("设置间歇时间")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                    .foregroundColor(.blue)
+                }
+            }
+        }
+    }
+    
+    private func startTimer() {
+        currentTimer?.invalidate()
+        remainingTime = TimeInterval(selectedSeconds)  // 直接使用秒数
+        isTimerRunning = true
+        isPresented = false
+        
+        currentTimer = Timer(fire: Date(), interval: 1.0, repeats: true) { timer in
+            if remainingTime > 1 {
+                remainingTime -= 1
+            } else {
+                timer.invalidate()
+                isTimerRunning = false
+                AudioServicesPlaySystemSound(1007)
+                
+                let content = UNMutableNotificationContent()
+                content.title = "休息时间结束"
+                content.body = "该继续训练了！"
+                content.sound = .default
+                let request = UNNotificationRequest(identifier: UUID().uuidString,
+                                                  content: content,
+                                                  trigger: nil)
+                UNUserNotificationCenter.current().add(request)
+            }
+        }
+        RunLoop.main.add(currentTimer!, forMode: .common)
+    }
+}
+
+// 修改 TimePickerView 使用秒而不是分钟
+struct TimePickerView: View {
+    @Binding var selectedSeconds: Int  // 直接使用秒
+    @State private var isDragging = false
+    private let maxSeconds = 6 * 60  // 最大6分钟（360秒）
+    private let tickInterval = 10  // 10秒一个刻度
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let size = min(geometry.size.width, geometry.size.height)
+            let radius = size / 2
+            let ringWidth: CGFloat = 48  // 圆环宽度
+            let ringRadius = radius - ringWidth/2  // 圆环中心线的半径
+            let center = CGPoint(x: radius, y: radius)
+            
+            ZStack {
+                // 背景和刻度
+                CircleTicksView(
+                    radius: radius,
+                    ringRadius: ringRadius,
+                    ringWidth: ringWidth,
+                    maxSeconds: maxSeconds,
+                    tickInterval: tickInterval
+                )
+                
+                // 选中的圆弧
+                Circle()
+                    .trim(from: 0, to: CGFloat(selectedSeconds) / CGFloat(maxSeconds))
+                    .stroke(Color.blue, style: StrokeStyle(lineWidth: ringWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                
+                // 手柄
+                HandleView(
+                    center: center,
+                    radius: ringRadius,  // 使用圆环中心线的半径
+                    seconds: selectedSeconds,
+                    maxSeconds: maxSeconds,
+                    isDragging: isDragging
+                )
+                
+                CenterDisplayView(seconds: selectedSeconds)
+            }
+            .frame(width: size, height: size)
+            .position(x: geometry.size.width/2, y: geometry.size.height/2)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        handleDrag(value: value, center: center)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    }
+            )
+        }
+    }
+    
+    private func handleDrag(value: DragGesture.Value, center: CGPoint) {
+        isDragging = true
+        let vector = CGVector(
+            dx: value.location.x - center.x,
+            dy: value.location.y - center.y
+        )
+        var angle = atan2(vector.dy, vector.dx)
+        if angle < 0 { angle += 2 * .pi }
+        
+        let normalizedAngle = (angle + .pi/2).truncatingRemainder(dividingBy: 2 * .pi)
+        let newSeconds = Int(round((normalizedAngle / (2 * .pi)) * Double(maxSeconds)))
+        let roundedSeconds = (newSeconds / tickInterval) * tickInterval
+        
+        if roundedSeconds != selectedSeconds {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selectedSeconds = max(tickInterval, min(maxSeconds, roundedSeconds == 0 ? maxSeconds : roundedSeconds))
+        }
+    }
+}
+
+// 修改 CircleTicksView
+private struct CircleTicksView: View {
+    let radius: CGFloat
+    let ringRadius: CGFloat
+    let ringWidth: CGFloat
+    let maxSeconds: Int
+    let tickInterval: Int
+    
+    var body: some View {
+        ZStack {
+            // 背景圆环
+            Circle()
+                .stroke(Color(.systemGray5), lineWidth: ringWidth)
+            
+            // 刻度线
+            TickMarksView(
+                radius: radius,
+                ringRadius: ringRadius,
+                maxSeconds: maxSeconds,
+                tickInterval: tickInterval
+            )
+            
+            // 分钟数字
+            ForEach(1...6, id: \.self) { minute in
+                Text("\(minute)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color(.systemGray))
+                    .position(
+                        x: radius + sin(Double(minute) * .pi / 3) * (ringRadius - 30),
+                        y: radius - cos(Double(minute) * .pi / 3) * (ringRadius - 30)
+                    )
+            }
+        }
+    }
+}
+
+// 新增 TickMarksView 来处理刻度线
+private struct TickMarksView: View {
+    let radius: CGFloat
+    let ringRadius: CGFloat
+    let maxSeconds: Int
+    let tickInterval: Int
+    
+    var body: some View {
+        let totalTicks = maxSeconds / tickInterval
+        
+        ForEach(0..<totalTicks, id: \.self) { tick in
+            let isMainTick = tick % 6 == 0  // 每分钟一个主刻度
+            let tickWidth: CGFloat = isMainTick ? 2 : 1
+            let tickHeight: CGFloat = isMainTick ? 12 : 8
+            
+            // 修正角度计算
+            let angle = Double(tick) * (360.0 / Double(totalTicks))
+            
+            Rectangle()
+                .fill(Color(.systemGray3))
+                .frame(width: tickWidth, height: tickHeight)
+                .offset(y: -radius + 24)
+                .rotationEffect(.degrees(angle))
+        }
+    }
+}
+
+private struct HandleView: View {
+    let center: CGPoint
+    let radius: CGFloat
+    let seconds: Int
+    let maxSeconds: Int
+    let isDragging: Bool
+    
+    var body: some View {
+        let angle = Double(seconds) * 2 * .pi / Double(maxSeconds) - .pi / 2
+        let handleRadius = radius - 24  // 保持不变，因为这是圆环中心线的位置
+        
+        Circle()
+            .fill(Color.blue)
+            .frame(width: 20, height: 20)
+            .position(
+                x: center.x + cos(angle) * handleRadius,
+                y: center.y + sin(angle) * handleRadius
+            )
+            .shadow(radius: isDragging ? 4 : 2)
+    }
+}
+
+private struct CenterDisplayView: View {
+    let seconds: Int
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("\(seconds/60):\(String(format: "%02d", seconds%60))")
+                .font(.system(size: 42, weight: .medium))
+            Text("分:秒")
+                .font(.system(size: 17))
+                .foregroundColor(.secondary)
         }
     }
 } 
