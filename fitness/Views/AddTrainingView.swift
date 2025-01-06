@@ -7,7 +7,7 @@ struct AddTrainingView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("userId") private var userId: String = ""
     
-    @State private var selectedBodyPart = "胸部"
+    @State private var filterBodyPart: String  // 改名为 filterBodyPart，表示这只是筛选用
     @State private var selectedExercise: Exercise? = nil
     @State private var duration = ""
     @State private var sets = 1  // 组数
@@ -39,20 +39,19 @@ struct AddTrainingView: View {
         self.date = date
         self.onTrainingAdded = onTrainingAdded
         
-        // 如果有今日训练部位,则使用它;否则默认显示"全部"
-        _selectedBodyPart = State(initialValue: todayTrainingPart.isEmpty ? "全部" : todayTrainingPart)
+        // 初始化筛选部位为"全部"，不使用今日训练部位
+        _filterBodyPart = State(initialValue: "全部")
         
-        // 打印日志便于调试
         print("📅 初始化训练视图 - 日期: \(date)")
-        print("💪 今日训练部位: \(todayTrainingPart.isEmpty ? "未设置" : todayTrainingPart)")
+        print("🔍 初始筛选部位: 全部")
     }
     
     private var filteredExercises: [Exercise] {
         exercises.filter { exercise in
             let matchesSearch = searchText.isEmpty || 
                 exercise.name.localizedCaseInsensitiveContains(searchText)
-            let matchesCategory = selectedBodyPart == "全部" || 
-                exercise.category == selectedBodyPart
+            let matchesCategory = filterBodyPart == "全部" || 
+                exercise.category == filterBodyPart
             return matchesSearch && matchesCategory
         }
     }
@@ -124,23 +123,20 @@ struct AddTrainingView: View {
                         ForEach(bodyParts, id: \.self) { part in
                             Button(action: {
                                 withAnimation {
-                                    selectedBodyPart = part
-                                    updateTodayTrainingPart() // 更新今日训练部位
+                                    filterBodyPart = part
+                                    hideTrainingDetail()
+                                    playHapticFeedback()
                                 }
                             }) {
                                 BodyPartButton(
                                     part: part,
                                     count: categoryCounts[part] ?? 0,
-                                    isSelected: selectedBodyPart == part,
+                                    isSelected: filterBodyPart == part,
                                     action: { 
                                         withAnimation { 
                                             hideTrainingDetail()
-                                            selectedBodyPart = part 
+                                            filterBodyPart = part 
                                             playHapticFeedback()
-                                            if part != "全部" {
-                                                todayTrainingPart = part
-                                                saveTrainingPart()
-                                            }
                                         }
                                     }
                                 )
@@ -148,9 +144,8 @@ struct AddTrainingView: View {
                         }
                     }
                     .padding(.horizontal)
-                    .padding(.vertical, 12)
                 }
-                .background(Color(.systemBackground))
+                .padding(.vertical, 8)
                 
                 // 今日训练记录
                 if !todayRecords.isEmpty {
@@ -252,7 +247,7 @@ struct AddTrainingView: View {
                 // 如果有今日训练部位,自动滚动到对应分类
                 if !todayTrainingPart.isEmpty {
                     withAnimation {
-                        selectedBodyPart = todayTrainingPart
+                        filterBodyPart = todayTrainingPart
                     }
                 }
             }
@@ -356,15 +351,6 @@ struct AddTrainingView: View {
         print("💾 训练项目已缓存: \(exercises.count) 个")
     }
     
-    // 更新今日训练部位的方法
-    private func updateTodayTrainingPart() {
-        // 只有当选择了非"全部"的部位时才更新
-        if selectedBodyPart != "全部" {
-            todayTrainingPart = selectedBodyPart
-            print("📝 更新今日训练部位: \(selectedBodyPart)")
-        }
-    }
-    
     private func loadLastRecord(for exercise: Exercise) {
         let recordsPath = "users/\(userId)/exercises/\(exercise.id)/records"
         print("🔍 开始查询记录 - 路径: \(recordsPath)")
@@ -445,7 +431,7 @@ struct AddTrainingView: View {
         
         let trainingData: [String: Any] = [
             "type": exercise.name,
-            "bodyPart": selectedBodyPart,
+            "bodyPart": filterBodyPart,
             "sets": sets,
             "reps": reps,
             "weight": weightValue,
@@ -496,28 +482,6 @@ struct AddTrainingView: View {
                             date: (data["date"] as? Timestamp)?.dateValue() ?? Date()
                         )
                     }
-                }
-            }
-    }
-    
-    private func saveTrainingPart() {
-        guard selectedBodyPart != "全部" else { return }
-        
-        let db = Firestore.firestore()
-        let trainingPartData: [String: Any] = [
-            "bodyPart": selectedBodyPart,
-            "date": date,
-            "userId": userId
-        ]
-        
-        db.collection("users")
-            .document(userId)
-            .collection("trainingParts")
-            .document(date.formatDate())
-            .setData(trainingPartData) { error in
-                if let error = error {
-                    errorMessage = "保存训练部位失败: \(error.localizedDescription)"
-                    showError = true
                 }
             }
     }
@@ -944,29 +908,45 @@ struct WeightInputColumn: View {
     @Binding var integerPart: Int
     @Binding var decimalPart: Int
     
-    // 添加状态变量来控制加载和初始化
     @State private var isInitialized = false
     @State private var isLoading = true
     @State private var range: [Int] = []
+    @State private var lastRecordValue: Double? = nil  // 添加这个状态来跟踪历史记录
     
-    // 计算整数范围
-    private func calculateRange() -> [Int] {
-        if let lastRecord = exercise.lastRecord, lastRecord > 0 {
-            let baseValue = Int(lastRecord)
-            let minValue = max(1, Int(Double(baseValue) * 0.6))
-            let maxValue = Int(Double(baseValue) * 1.2)
-            return Array(minValue...maxValue)
-        } else if integerPart > 0 {
-            let minValue = max(1, Int(Double(integerPart) * 0.6))
-            let maxValue = Int(Double(integerPart) * 1.2)
-            return Array(minValue...maxValue)
-        } else {
-            return switch exercise.unit {
-            case "kg", "lbs": Array(1...200)
-            case "次", "组": Array(1...30)
-            case "秒", "分钟": Array(1...60)
-            default: Array(1...100)
+    // 添加一个新的方法来处理记录更新
+    private func handleRecordUpdate(_ newRecord: Double) {
+        print("\n🔄 处理记录更新 - \(exercise.name):")
+        print("  - 新记录: \(newRecord)")
+        
+        // 计算新范围
+        let baseValue = Int(newRecord)
+        let minValue = max(1, Int(Double(baseValue) * 0.6))
+        let maxValue = Int(Double(baseValue) * 1.5)
+        let newRange = Array(minValue...maxValue)
+        
+        print("📏 新范围计算:")
+        print("  - 基准值: \(baseValue)")
+        print("  - 最小值: \(minValue)")
+        print("  - 最大值: \(maxValue)")
+        
+        // 在主线程上更新 UI
+        DispatchQueue.main.async {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                // 更新所有状态
+                self.range = newRange
+                self.integerPart = baseValue
+                self.decimalPart = self.findClosestDecimalPart(
+                    Int((newRecord.truncatingRemainder(dividingBy: 1)) * 100)
+                )
+                self.lastRecordValue = newRecord
             }
+            
+            print("✅ 更新完成:")
+            print("  - 范围: \(minValue)...\(maxValue)")
+            print("  - 当前值: \(self.integerPart).\(self.decimalPart)")
+            
+            // 更新最终值
+            self.updateValue()
         }
     }
     
@@ -1025,19 +1005,64 @@ struct WeightInputColumn: View {
             }
         }
         .onAppear {
-            // 延迟初始化，等待数据加载完成
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                range = calculateRange()
-                
-                if let lastRecord = exercise.lastRecord, lastRecord > 0, !isInitialized {
-                    integerPart = Int(lastRecord)
-                    isInitialized = true
-                    updateValue()
-                }
-                
-                isLoading = false
+            print("🔄 组件加载 - \(exercise.name)")
+            initializeValues()
+        }
+        // 修改 onChange 处理
+        .onChange(of: exercise.lastRecord) { oldValue, newValue in
+            print("\n📝 检测到历史记录更新:")
+            print("  - 旧值: \(oldValue ?? 0)")
+            print("  - 新值: \(newValue ?? 0)")
+            
+            if let newRecord = newValue {
+                handleRecordUpdate(newRecord)
             }
         }
+    }
+    
+    private func initializeValues() {
+        print("\n📊 初始化值 - \(exercise.name):")
+        
+        if let lastRecord = exercise.lastRecord, lastRecord > 0 {
+            handleRecordUpdate(lastRecord)
+        } else {
+            print("ℹ️ 无历史记录，使用默认范围")
+            let defaultRange = switch exercise.unit {
+            case "kg", "lbs": Array(1...200)
+            case "次", "组": Array(1...30)
+            case "秒": Array(1...60)
+            case "分钟": Array(1...60)
+            case "m": Array(1...200)
+            case "km", "mile": Array(1...30)
+            default: Array(1...100)
+            }
+            
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    self.range = defaultRange
+                    self.integerPart = defaultRange[defaultRange.count / 2]
+                    self.decimalPart = 0
+                    self.isLoading = false
+                    self.isInitialized = true
+                }
+                
+                print("📏 默认范围: 1...\(defaultRange.count)")
+                print("🎯 默认值: \(self.integerPart)")
+                
+                self.updateValue()
+            }
+        }
+        
+        print("✅ 初始化完成\n")
+    }
+    
+    // 添加查找最接近的小数部分的方法
+    private func findClosestDecimalPart(_ value: Int) -> Int {
+        // 获取可用的小数部分选项
+        let availableDecimals = decimalParts
+        
+        // 找到最接近的值
+        return availableDecimals.min(by: { abs($0 - value) < abs($1 - value) }) ?? 0
     }
     
     // 根据单位类型返回对应图标
