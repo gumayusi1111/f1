@@ -23,6 +23,9 @@ struct AddPRRecordView: View {
     @State private var recordsPerPage = 8
     @State private var pageTransition: Double = 0 // 控制翻页动画方向
     @State private var expandTransition: Bool = false // 控制展开/收起动画
+    @State private var isLoadingRecords = false
+    @State private var lastLoadTime: Date?
+    private let cacheExpirationInterval: TimeInterval = 300 // 缓存5分钟过期
     var onRecordUpdate: (() -> Void)?
     
     // 修改滚轮选择器的范围计算
@@ -541,6 +544,7 @@ struct AddPRRecordView: View {
                 showSuccessAnimation = true
                 savedRecord = newRecord
                 records.insert(newRecord, at: 0)
+                saveRecordsToCache(records)
                 onRecordUpdate?()
             }
             
@@ -559,7 +563,20 @@ struct AddPRRecordView: View {
         }
     }
     
-    private func loadRecords() {
+    private func loadRecords(forceRefresh: Bool = false) {
+        guard !isLoadingRecords else { return }
+        
+        // 如果不是强制刷新且缓存未过期,使用缓存数据
+        if !forceRefresh,
+           let lastLoad = lastLoadTime,
+           Date().timeIntervalSince(lastLoad) < cacheExpirationInterval,
+           let cachedRecords = loadRecordsFromCache() {
+            log("📦 使用缓存数据: \(cachedRecords.count) 条记录")
+            self.records = cachedRecords
+            return
+        }
+        
+        isLoadingRecords = true
         log("\n========== 开始加载记录 ==========")
         log("运动项目: \(exercise.name) (ID: \(exercise.id))")
         log("当前最大记录: \(exercise.maxRecord ?? 0) \(exercise.unit ?? "")")
@@ -581,18 +598,20 @@ struct AddPRRecordView: View {
         log("📝 开始查询记录: users/\(userId)/exercises/\(exercise.id)/records")
         
         recordsRef.getDocuments { snapshot, error in
+            defer { self.isLoadingRecords = false }
+            
             if let error = error {
-                log("❌ 加载记录失败: \(error.localizedDescription)", type: "ERROR")
+                self.log("❌ 加载记录失败: \(error.localizedDescription)", type: "ERROR")
                 return
             }
             
-            log("📊 查询结果: 找到 \(snapshot?.documents.count ?? 0) 条记录")
+            self.log("📊 查询结果: 找到 \(snapshot?.documents.count ?? 0) 条记录")
             
             // 转换记录
             self.records = snapshot?.documents.compactMap { document in
-                log("处理记录: \(document.documentID)")
+                self.log("处理记录: \(document.documentID)")
                 
-                let data = document.data()  // 不需要 guard let，因为 data() 返回非可选类型
+                let data = document.data()
                 
                 // 详细记录每个字段的解析
                 let id = data["id"] as? String
@@ -600,7 +619,7 @@ struct AddPRRecordView: View {
                 let timestamp = data["date"] as? Timestamp
                 let isPR = data["isPR"] as? Bool
                 
-                log("""
+                self.log("""
                     记录详情:
                     - ID: \(id ?? "nil")
                     - 值: \(value ?? 0)
@@ -612,24 +631,27 @@ struct AddPRRecordView: View {
                       let value = value,
                       let date = timestamp?.dateValue(),
                       let isPR = isPR else {
-                    log("❌ 记录数据格式错误: \(document.documentID)", type: "ERROR")
+                    self.log("❌ 记录数据格式错误: \(document.documentID)", type: "ERROR")
                     return nil
                 }
                 
                 return ExerciseRecord(id: id, value: value, date: date, isPR: isPR)
             } ?? []
             
-            log("✅ 成功加载并转换 \(self.records.count) 条记录")
+            self.log("✅ 成功加载并转换 \(self.records.count) 条记录")
             
             // 验证记录排序
             if !self.records.isEmpty {
-                log("""
+                self.log("""
                     最新记录:
                     - 时间: \(self.records[0].date)
                     - 值: \(self.records[0].value)
                     - 是否PR: \(self.records[0].isPR)
                     """)
             }
+            
+            // 保存到缓存
+            self.saveRecordsToCache(self.records)
         }
     }
     
@@ -684,6 +706,7 @@ struct AddPRRecordView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 withAnimation(.easeInOut(duration: 0.3)) {
                     records.removeAll { $0.id == record.id }
+                    saveRecordsToCache(records)
                 }
                 
                 // 更新外部状态
@@ -791,6 +814,27 @@ struct AddPRRecordView: View {
             return "\(value)"
         }
     }
+    
+    private func getCacheKey(for exerciseId: String) -> String {
+        return "exercise_records_\(exerciseId)"
+    }
+    
+    private func loadRecordsFromCache() -> [ExerciseRecord]? {
+        let cacheKey = getCacheKey(for: exercise.id)
+        guard let cachedData = UserDefaults.standard.data(forKey: cacheKey),
+              let cachedRecords = try? JSONDecoder().decode([ExerciseRecord].self, from: cachedData) else {
+            return nil
+        }
+        return cachedRecords
+    }
+    
+    private func saveRecordsToCache(_ records: [ExerciseRecord]) {
+        let cacheKey = getCacheKey(for: exercise.id)
+        if let encodedData = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(encodedData, forKey: cacheKey)
+            lastLoadTime = Date()
+        }
+    }
 }
 
 // 优化历史记录行视图
@@ -854,7 +898,7 @@ struct RecordRow: View {
 }
 
 // 记录数据模型
-struct ExerciseRecord: Identifiable {
+struct ExerciseRecord: Identifiable, Codable {
     let id: String
     let value: Double
     let date: Date
