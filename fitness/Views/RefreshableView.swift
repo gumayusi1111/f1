@@ -22,6 +22,11 @@ struct RefreshableView<Content: View>: View {
     private let minimumRefreshInterval: TimeInterval = 60 // 1分钟刷新限制
     @State private var lastRefreshAttempt: Date?
     
+    // 在现有属性后添加重试相关的状态
+    @State private var retryCount = 0
+    private let maxRetries = 3
+    private let retryDelays: [TimeInterval] = [2, 4, 8] // 指数退避延迟时间
+    
     // MARK: - Initialization
     init(
         @ViewBuilder content: () -> Content,
@@ -144,7 +149,7 @@ struct RefreshableView<Content: View>: View {
         Task {
             do {
                 let startTime = Date()
-                try await withTimeout(operation: onRefresh)
+                try await performRefreshWithRetry()
                 
                 let endTime = Date()
                 let minimumDuration: TimeInterval = 0.5
@@ -158,6 +163,7 @@ struct RefreshableView<Content: View>: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isRefreshing = false
                         lastRefreshTime = Date()
+                        retryCount = 0 // 重置重试计数
                     }
                 }
                 print("✅ 刷新完成")
@@ -165,12 +171,61 @@ struct RefreshableView<Content: View>: View {
             } catch {
                 print("❌ 刷新失败: \(error.localizedDescription)")
                 await MainActor.run {
-                    showError("刷新失败，请稍后重试")
-                    withAnimation {
-                        isRefreshing = false
-                    }
+                    handleRefreshError(error)
                 }
             }
+        }
+    }
+    
+    private func performRefreshWithRetry() async throws {
+        var lastError: Error?
+        
+        for attempt in 0...maxRetries {
+            do {
+                if attempt > 0 {
+                    // 计算延迟时间
+                    let delay = retryDelays[min(attempt - 1, retryDelays.count - 1)]
+                    print("🔄 等待 \(delay) 秒后重试...")
+                    try await Task.sleep(for: .seconds(delay))
+                }
+                
+                try await withTimeout(operation: onRefresh)
+                return // 成功则直接返回
+                
+            } catch is TimeoutError {
+                throw TimeoutError() // 超时直接抛出，不重试
+            } catch {
+                lastError = error
+                print("❌ 第 \(attempt + 1) 次尝试失败: \(error.localizedDescription)")
+                
+                await MainActor.run {
+                    retryCount = attempt + 1
+                    if attempt < maxRetries {
+                        showError("网络请求失败，正在重试...")
+                    }
+                }
+                
+                continue // 继续下一次重试
+            }
+        }
+        
+        throw lastError ?? NSError(domain: "RefreshError", code: -1, userInfo: [NSLocalizedDescriptionKey: "刷新失败"])
+    }
+    
+    private func handleRefreshError(_ error: Error) {
+        let errorMessage: String
+        if error is TimeoutError {
+            errorMessage = "请求超时，请检查网络连接"
+        } else if retryCount >= maxRetries {
+            errorMessage = "多次重试失败，请稍后再试"
+        } else {
+            errorMessage = "刷新失败，请检查网络连接"
+        }
+        
+        showError(errorMessage)
+        withAnimation {
+            isRefreshing = false
+            retryCount = 0 // 重置重试计数
         }
     }
     
@@ -201,12 +256,13 @@ struct RefreshableView<Content: View>: View {
     
     // MARK: - Computed Properties
     private var refreshStatusText: String {
+        if isRefreshing {
+            return retryCount > 0 ? "正在重试(\(retryCount)/\(maxRetries))..." : "正在刷新..."
+        }
         if let lastAttempt = lastRefreshAttempt,
            Date().timeIntervalSince(lastAttempt) < minimumRefreshInterval {
             let remainingTime = Int(minimumRefreshInterval - Date().timeIntervalSince(lastAttempt))
             return "\(remainingTime)秒后可刷新"
-        } else if isRefreshing {
-            return "正在刷新..."
         } else if pullOffset > refreshThreshold {
             return "松手刷新"
         } else if pullOffset > 0 {
