@@ -37,11 +37,19 @@ struct CalendarView: View {
     @State private var trainingParts: [String: String] = [:]
     
     var body: some View {
-        VStack(spacing: 16) {
-            headerSection
-            dateNavigationSection
-            backToTodayButton
-            calendarListSection
+        RefreshableView {
+            VStack(spacing: 16) {
+                headerSection
+                dateNavigationSection
+                backToTodayButton
+                calendarListSection
+            }
+        } onRefresh: {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await loadTrainingRecords() }
+                group.addTask { await loadRestDays() }
+                group.addTask { await loadTrainingParts() }
+            }
         }
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showingAddTraining) {
