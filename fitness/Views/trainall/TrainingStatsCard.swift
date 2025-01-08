@@ -25,9 +25,6 @@ struct TrainingStatsCard: View {
                     // 频率分析
                     FrequencySection(viewModel: viewModel, stats: viewModel.frequencyStats)
                     
-                    // 当前项目统计
-                    ExerciseStatsView(stats: viewModel.selectedExerciseStats)
-                    
                     // 训练趋势
                     ExerciseTrendView(stats: viewModel.selectedExerciseStats)
                     
@@ -55,34 +52,20 @@ private struct ExerciseStatsView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // 最大重量和当前重量
-            HStack(spacing: 20) {
-                WeightMetric(
-                    title: "最大重量",
-                    value: stats.maxWeight,
-                    unit: "kg"
-                )
-                
-                WeightMetric(
-                    title: "当前重量",
-                    value: stats.currentWeight,
-                    unit: "kg",
-                    progress: stats.progress
-                )
-            }
-            
             // 训练容量
             HStack(spacing: 20) {
                 VolumeMetric(
                     title: "周容量",
                     value: stats.weeklyVolume,
-                    unit: "kg"
+                    unit: "kg",
+                    subtitle: "\(Int(stats.maxWeight))kg 最大"
                 )
                 
                 VolumeMetric(
                     title: "月平均",
                     value: stats.weeklyAverageVolume,
-                    unit: "kg/周"
+                    unit: "kg/周",
+                    subtitle: "\(Int(stats.currentWeight))kg 当前"
                 )
             }
         }
@@ -140,6 +123,7 @@ private struct VolumeMetric: View {
     let title: String
     let value: Double
     let unit: String
+    var subtitle: String? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -153,6 +137,12 @@ private struct VolumeMetric: View {
                     .fontWeight(.bold)
                 
                 Text(unit)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            if let subtitle = subtitle {
+                Text(subtitle)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

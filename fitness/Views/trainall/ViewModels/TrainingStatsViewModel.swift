@@ -244,6 +244,19 @@ class TrainingStatsViewModel: ObservableObject {
         var weeklyAverageVolume: Double {
             monthlyVolume / 4
         }
+        
+        var maxVolume: Double {
+            recentRecords.map { $0.weight * Double($0.sets ?? 1) }.max() ?? 0
+        }
+        
+        var averageSets: Double {
+            let totalSets = recentRecords.compactMap { $0.sets }.reduce(0, +)
+            return recentRecords.isEmpty ? 0 : Double(totalSets) / Double(recentRecords.count)
+        }
+        
+        var frequency: Double {
+            Double(recentRecords.count) / 4 // 假设是最近4周的数据
+        }
     }
     
     // 获取非三大项的其他训练记录
@@ -257,5 +270,100 @@ class TrainingStatsViewModel: ObservableObject {
     // 获取其他训练的分组数据
     var otherWorkoutsByType: [String: [WorkoutRecord]] {
         Dictionary(grouping: otherWorkouts) { $0.exerciseId }
+    }
+    
+    struct VolumeData: Identifiable {
+        let id = UUID()
+        let label: String
+        let volume: Double
+    }
+    
+    var volumeComparisonData: [VolumeData] {
+        switch volumePeriod {
+        case .week:
+            // 获取最近7天的数据并按日期分组
+            let calendar = Calendar.current
+            let today = Date()
+            let weekAgo = calendar.date(byAdding: .day, value: -7, to: today)!
+            
+            // 创建最近7天的日期数组
+            var dates: [Date] = []
+            for i in 0..<7 {
+                if let date = calendar.date(byAdding: .day, value: -i, to: today) {
+                    dates.append(date)
+                }
+            }
+            
+            // 获取训练记录并按日期分组
+            let workoutsByDate = Dictionary(grouping: selectedExerciseWorkouts) { workout in
+                calendar.startOfDay(for: workout.date)
+            }
+            
+            // 为每一天创建数据点
+            return dates.map { date in
+                let dayStart = calendar.startOfDay(for: date)
+                let dayWorkouts = workoutsByDate[dayStart] ?? []
+                let volume = dayWorkouts.reduce(0) { sum, workout in
+                    sum + (workout.weight * Double(workout.sets ?? 1))
+                }
+                
+                return VolumeData(
+                    label: date.formatted(.dateTime.day()),
+                    volume: volume
+                )
+            }.reversed()
+            
+        case .month:
+            // 按周分组最近4周的数据
+            let calendar = Calendar.current
+            let today = Date()
+            var weeklyVolumes: [VolumeData] = []
+            
+            for weekIndex in 0..<4 {
+                let weekEnd = calendar.date(byAdding: .day, value: -7 * weekIndex, to: today)!
+                let weekStart = calendar.date(byAdding: .day, value: -6, to: weekEnd)!
+                
+                let weekWorkouts = selectedExerciseWorkouts.filter { workout in
+                    workout.date >= weekStart && workout.date <= weekEnd
+                }
+                
+                let volume = weekWorkouts.reduce(0) { sum, workout in
+                    sum + (workout.weight * Double(workout.sets ?? 1))
+                }
+                
+                weeklyVolumes.append(VolumeData(
+                    label: "第\(4-weekIndex)周",
+                    volume: volume
+                ))
+            }
+            
+            return weeklyVolumes.reversed()
+            
+        case .quarter:
+            // 按月分组最近3个月的数据
+            let calendar = Calendar.current
+            let today = Date()
+            var monthlyVolumes: [VolumeData] = []
+            
+            for monthIndex in 0..<3 {
+                let monthEnd = calendar.date(byAdding: .month, value: -monthIndex, to: today)!
+                let monthStart = calendar.date(byAdding: .day, value: -30, to: monthEnd)!
+                
+                let monthWorkouts = selectedExerciseWorkouts.filter { workout in
+                    workout.date >= monthStart && workout.date <= monthEnd
+                }
+                
+                let volume = monthWorkouts.reduce(0) { sum, workout in
+                    sum + (workout.weight * Double(workout.sets ?? 1))
+                }
+                
+                monthlyVolumes.append(VolumeData(
+                    label: monthEnd.formatted(.dateTime.month()),
+                    volume: volume
+                ))
+            }
+            
+            return monthlyVolumes.reversed()
+        }
     }
 } 
