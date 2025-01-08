@@ -245,4 +245,17 @@ class TrainingStatsViewModel: ObservableObject {
             monthlyVolume / 4
         }
     }
+    
+    // 获取非三大项的其他训练记录
+    var otherWorkouts: [WorkoutRecord] {
+        workouts.filter { workout in
+            !ExerciseType.isMainExercise(workout.exerciseId)
+        }
+        .sorted { $0.date > $1.date }  // 按日期降序排序
+    }
+    
+    // 获取其他训练的分组数据
+    var otherWorkoutsByType: [String: [WorkoutRecord]] {
+        Dictionary(grouping: otherWorkouts) { $0.exerciseId }
+    }
 } 

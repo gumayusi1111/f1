@@ -33,6 +33,11 @@ struct TrainingStatsCard: View {
                     
                     // 容量分析
                     VolumeSection(viewModel: viewModel, stats: viewModel.volumeStats)
+                    
+                    // 其他训练记录卡片 - 只在显示三项时显示
+                    if viewModel.selectedExercise == ExerciseType.bigThree {
+                        OtherExercisesCard(workouts: viewModel.otherWorkoutsByType)
+                    }
                 }
                 .padding()
                 .background(Color(.systemBackground))
