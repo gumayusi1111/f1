@@ -7,6 +7,7 @@ struct TrainingView: View {
     @State private var showingAddTraining = false
     @State private var isRefreshing = false
     @State private var showRefreshHint = true // 控制提示显示
+    @State private var isLoading = false
     
     var body: some View {
         ScrollView {
@@ -30,6 +31,10 @@ struct TrainingView: View {
                     }
                 }
                 .padding()
+                
+                if isLoading {
+                    ProgressView()
+                }
             }
         }
         .refreshable {
@@ -137,6 +142,7 @@ class TrainingViewModel: ObservableObject {
             }
         } catch {
             logger.error("❌ 加载训练记录失败: \(error.localizedDescription)")
+            // 应该添加错误状态处理
         }
     }
 } 

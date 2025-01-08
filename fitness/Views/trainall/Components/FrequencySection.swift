@@ -13,7 +13,7 @@ struct FrequencySection: View {
                 Spacer()
                 
                 // 时间段选择器
-                Picker("时间段", selection: $viewModel.selectedPeriod) {
+                Picker("时间段", selection: $viewModel.frequencyPeriod) {
                     ForEach(TrainingStatsViewModel.ComparisonPeriod.allCases, id: \.self) { period in
                         Text(period.rawValue).tag(period)
                     }

@@ -59,25 +59,34 @@ class TrainingStatsViewModel: ObservableObject {
         }
     }
     
+    @Published var frequencyPeriod: ComparisonPeriod = .week
+    
     var frequencyStats: FrequencyStats {
-        let current = bigThreeWorkouts.filter { 
-            isWithinDays($0.date, days: selectedPeriod.days) 
+        let filteredWorkouts = selectedExercise == ExerciseType.bigThree 
+            ? bigThreeWorkouts 
+            : workouts.filter { $0.exerciseId == selectedExercise }
+            
+        let current = filteredWorkouts.filter { 
+            isWithinDays($0.date, days: frequencyPeriod.days) 
         }.count
         
-        let previous = calculatePreviousFrequency(days: selectedPeriod.days)
+        let previous = calculatePreviousFrequency(
+            days: frequencyPeriod.days,
+            workouts: filteredWorkouts
+        )
         
         return FrequencyStats(
             current: current,
             previous: previous,
-            period: selectedPeriod
+            period: frequencyPeriod
         )
     }
     
-    private func calculatePreviousFrequency(days: Int) -> Int {
+    private func calculatePreviousFrequency(days: Int, workouts: [WorkoutRecord]) -> Int {
         let endDate = calendar.date(byAdding: .day, value: -days, to: Date())!
         let startDate = calendar.date(byAdding: .day, value: -days, to: endDate)!
         
-        return bigThreeWorkouts
+        return workouts
             .filter { $0.date >= startDate && $0.date <= endDate }
             .count
     }
@@ -112,24 +121,42 @@ class TrainingStatsViewModel: ObservableObject {
         }
     }
     
-    @Published var selectedPeriod: ComparisonPeriod = .week
+    @Published var volumePeriod: ComparisonPeriod = .week
     
     var volumeStats: VolumeStats {
-        let currentPeriod = calculateVolume(days: selectedPeriod.days)
-        let previousPeriod = calculateVolumePrevious(days: selectedPeriod.days)
+        let filteredWorkouts = selectedExercise == ExerciseType.bigThree 
+            ? bigThreeWorkouts 
+            : workouts.filter { $0.exerciseId == selectedExercise }
+            
+        let currentPeriod = calculateVolume(
+            days: volumePeriod.days,
+            workouts: filteredWorkouts
+        )
+        let previousPeriod = calculateVolumePrevious(
+            days: volumePeriod.days,
+            workouts: filteredWorkouts
+        )
         
         return VolumeStats(
             current: currentPeriod,
             previous: previousPeriod,
-            period: selectedPeriod
+            period: volumePeriod
         )
     }
     
-    private func calculateVolumePrevious(days: Int) -> Double {
+    private func calculateVolume(days: Int, workouts: [WorkoutRecord]) -> Double {
+        workouts
+            .filter { isWithinDays($0.date, days: days) }
+            .reduce(0) { sum, workout in
+                sum + (workout.weight * Double(workout.sets ?? 1))
+            }
+    }
+    
+    private func calculateVolumePrevious(days: Int, workouts: [WorkoutRecord]) -> Double {
         let endDate = calendar.date(byAdding: .day, value: -days, to: Date())!
         let startDate = calendar.date(byAdding: .day, value: -days, to: endDate)!
         
-        return bigThreeWorkouts
+        return workouts
             .filter { $0.date >= startDate && $0.date <= endDate }
             .reduce(0) { sum, workout in
                 sum + (workout.weight * Double(workout.sets ?? 1))
@@ -168,17 +195,12 @@ class TrainingStatsViewModel: ObservableObject {
         return date >= startDate && date <= Date()
     }
     
-    private func calculateVolume(days: Int) -> Double {
-        bigThreeWorkouts
-            .filter { isWithinDays($0.date, days: days) }
-            .reduce(0) { sum, workout in
-                sum + (workout.weight * Double(workout.sets ?? 1))
-            }
-    }
-    
-    // 获取当前选中动作的训练记录
+    // 获取当前选中运动的训练记录
     var selectedExerciseWorkouts: [WorkoutRecord] {
-        workouts.filter { $0.exerciseId == selectedExercise }
+        if selectedExercise == ExerciseType.bigThree {
+            return bigThreeWorkouts // 返回所有三项运动的记录
+        }
+        return workouts.filter { $0.exerciseId == selectedExercise }
     }
     
     // 获取当前选中动作的统计数据
