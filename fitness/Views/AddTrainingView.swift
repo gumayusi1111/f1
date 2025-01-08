@@ -454,18 +454,15 @@ struct AddTrainingView: View {
     
     private func addTraining() {
         guard let exercise = selectedExercise,
-              let weightValue = Double(weight),
-              !exercise.name.isEmpty else { return }
-        
-        // 开始完成动画
-        withAnimation(.spring(response: 0.3)) {
-            isCompleting = true
-        }
+              let weightValue = Double(weight) else { return }
         
         isLoading = true
         let db = Firestore.firestore()
+        let dateString = date.formatDate()
+        let trainingId = UUID().uuidString
         
         let trainingData: [String: Any] = [
+            "id": trainingId,
             "type": exercise.name,
             "bodyPart": exercise.category,
             "sets": sets,
@@ -473,44 +470,24 @@ struct AddTrainingView: View {
             "weight": weightValue,
             "notes": notes,
             "date": date,
-            "createdAt": FieldValue.serverTimestamp(),
-            "userId": userId,
-            "unit": exercise.unit ?? "kg"  // 提供默认值
+            "createdAt": Date(),
+            "unit": exercise.unit ?? ""
         ]
         
         db.collection("users")
             .document(userId)
             .collection("trainings")
-            .addDocument(data: trainingData) { error in
+            .document(dateString)         
+            .collection("records")        
+            .document(trainingId)
+            .setData(trainingData) { error in
                 isLoading = false
-                
                 if let error = error {
-                    errorMessage = "添加失败: \(error.localizedDescription)"
+                    errorMessage = error.localizedDescription
                     showError = true
-                    // 重置动画状态
-                    withAnimation(.spring(response: 0.3)) {
-                        isCompleting = false
-                    }
                 } else {
-                    // 保存本次训练的值
-                    UserDefaults.standard.set(weightValue, forKey: "lastTrainingValue_" + exercise.id)
-                    
-                    // 显示成功动画
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
-                        showSuccessOverlay = true
-                    }
-                    
-                    // 播放触觉反馈
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.success)
-                    
-                    // 延迟关闭页面
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        onTrainingAdded()
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            dismiss()
-                        }
-                    }
+                    onTrainingAdded()
+                    dismiss()
                 }
             }
     }
