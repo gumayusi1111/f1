@@ -54,18 +54,18 @@ struct OtherExercisesCard: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 30)
             } else {
-                // 趋势图表
+                // 只显示趋势图表
                 if let exerciseId = selectedExercise,
                    let records = workouts[exerciseId]?.sorted(by: { $0.date < $1.date }) {
                     TrendChartView(records: records, exerciseId: exerciseId)
+                } else {
+                    // 当没有选择具体动作时，显示所有动作的趋势
+                    ForEach(Array(workouts.keys.sorted()), id: \.self) { exerciseId in
+                        if let records = workouts[exerciseId]?.sorted(by: { $0.date < $1.date }) {
+                            TrendChartView(records: records, exerciseId: exerciseId)
+                        }
+                    }
                 }
-                
-                // 记录列表
-                RecordListView(
-                    workouts: selectedExercise.map { id in
-                        [id: workouts[id] ?? []]
-                    } ?? workouts
-                )
             }
         }
         .padding()
@@ -74,31 +74,13 @@ struct OtherExercisesCard: View {
     }
 }
 
-// MARK: - 子视图组件
+// MARK: - 趋势图表组件
 private struct TrendChartView: View {
     let records: [WorkoutRecord]
     let exerciseId: String
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("\(exerciseId)趋势")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                if let maxWeight = records.map({ $0.weight }).max() {
-                    Text("最重: \(Int(maxWeight))kg")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color(.systemBackground))
-                        .cornerRadius(4)
-                }
-            }
-            
             Chart {
                 ForEach(records) { record in
                     LineMark(
@@ -129,77 +111,5 @@ private struct TrendChartView: View {
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(8)
-    }
-}
-
-private struct RecordListView: View {
-    let workouts: [String: [WorkoutRecord]]
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            ForEach(Array(workouts.keys.sorted()), id: \.self) { exerciseId in
-                if let records = workouts[exerciseId] {
-                    ExerciseRecordView(exerciseId: exerciseId, records: records)
-                }
-            }
-        }
-    }
-}
-
-private struct ExerciseRecordView: View {
-    let exerciseId: String
-    let records: [WorkoutRecord]
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(exerciseId)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Spacer()
-                
-                if let maxWeight = records.map({ $0.weight }).max() {
-                    Text("最重: \(Int(maxWeight))kg")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color(.systemBackground))
-                        .cornerRadius(4)
-                }
-            }
-            
-            ForEach(records.prefix(3)) { record in
-                HStack {
-                    Text(record.date.formatted(.dateTime.month().day()))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    Text("\(Int(record.weight))kg")
-                        .font(.subheadline)
-                    
-                    if let sets = record.sets {
-                        Text("× \(sets)组")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color(.systemBackground))
-                            .cornerRadius(4)
-                    }
-                }
-            }
-            
-            if records.count > 3 {
-                Text("及其他 \(records.count - 3) 条记录")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Divider()
-        }
     }
 } 

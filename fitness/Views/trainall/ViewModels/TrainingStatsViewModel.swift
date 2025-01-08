@@ -2,6 +2,24 @@ import Foundation
 import SwiftUI
 
 class TrainingStatsViewModel: ObservableObject {
+    enum ComparisonPeriod: String, CaseIterable, Identifiable {
+        case week = "周"
+        case month = "月"
+        case quarter = "季度"
+        
+        var id: String { rawValue }
+        
+        var label: String { rawValue }
+        
+        var days: Int {
+            switch self {
+            case .week: return 7
+            case .month: return 30
+            case .quarter: return 90
+            }
+        }
+    }
+    
     @Published private(set) var workouts: [WorkoutRecord]
     @Published var selectedExercise: String = ExerciseType.bench
     @Published var isLoading = true
@@ -175,20 +193,6 @@ class TrainingStatsViewModel: ObservableObject {
     }
     
     // MARK: - 容量分析
-    enum ComparisonPeriod: String, CaseIterable {
-        case week = "周"
-        case month = "月"
-        case quarter = "季度"
-        
-        var days: Int {
-            switch self {
-            case .week: return 7
-            case .month: return 30
-            case .quarter: return 90
-            }
-        }
-    }
-    
     struct VolumeStats {
         let current: Double
         let previous: Double
@@ -251,13 +255,12 @@ class TrainingStatsViewModel: ObservableObject {
     struct FatigueStat {
         let exerciseId: String
         let name: String
-        let currentWeight: Double
-        let maxWeight: Double
-        let fatigueLevel: Double
+        let fatigueLevels: [Double]
         let period: ComparisonPeriod
         
         var status: FatigueStatus {
-            switch fatigueLevel {
+            let averageLevel = fatigueLevels.reduce(0, +) / Double(fatigueLevels.count)
+            switch averageLevel {
             case 0: return .noData
             case ..<60: return .recovered
             case 60..<70: return .moderate
@@ -306,64 +309,16 @@ class TrainingStatsViewModel: ObservableObject {
     }
     
     var fatigueStats: [FatigueStat] {
-        let calendar = Calendar.current
-        let today = Date()
-        
-        // 如果不是三项视图,只返回当前选中项目的疲劳度
-        let exercises = selectedExercise == ExerciseType.bigThree 
+        let exerciseIds = selectedExercise == ExerciseType.bigThree 
             ? ExerciseType.mainExercises 
             : [selectedExercise]
         
-        return exercises.map { exerciseId in
-            let exerciseWorkouts = workouts.filter { $0.exerciseId == exerciseId }
-            let maxWeight = exerciseWorkouts.map { $0.weight }.max() ?? 0
-            
-            // 根据选择的时间段计算当前重量
-            let currentWeight: Double
-            switch fatiguePeriod {
-            case .week:
-                // 本周最大重量
-                let weekStart = calendar.date(byAdding: .day, value: -7, to: today)!
-                let weekWorkouts = exerciseWorkouts.filter { $0.date >= weekStart }
-                currentWeight = weekWorkouts.map { $0.weight }.max() ?? 0
-                
-            case .month:
-                // 四周平均最大重量
-                let monthStart = calendar.date(byAdding: .day, value: -28, to: today)!
-                let monthWorkouts = exerciseWorkouts.filter { $0.date >= monthStart }
-                let weeklyMaxes = (0..<4).compactMap { week in
-                    let weekEnd = calendar.date(byAdding: .day, value: -7 * week, to: today)!
-                    let weekStart = calendar.date(byAdding: .day, value: -7, to: weekEnd)!
-                    return monthWorkouts
-                        .filter { $0.date >= weekStart && $0.date <= weekEnd }
-                        .map { $0.weight }
-                        .max()
-                }
-                currentWeight = weeklyMaxes.reduce(0, +) / Double(weeklyMaxes.count)
-                
-            case .quarter:
-                // 三个月平均最大重量
-                let quarterStart = calendar.date(byAdding: .month, value: -3, to: today)!
-                let quarterWorkouts = exerciseWorkouts.filter { $0.date >= quarterStart }
-                let monthlyMaxes = (0..<3).compactMap { month in
-                    let monthEnd = calendar.date(byAdding: .month, value: -month, to: today)!
-                    let monthStart = calendar.date(byAdding: .month, value: -1, to: monthEnd)!
-                    return quarterWorkouts
-                        .filter { $0.date >= monthStart && $0.date <= monthEnd }
-                        .map { $0.weight }
-                        .max()
-                }
-                currentWeight = monthlyMaxes.reduce(0, +) / Double(monthlyMaxes.count)
-            }
-            
-            let fatigueLevel = maxWeight > 0 ? (currentWeight / maxWeight * 100) : 0
-            
+        return exerciseIds.map { exerciseId in
+            let levels = calculateFatigue(exerciseId: exerciseId, period: fatiguePeriod)
             return FatigueStat(
                 exerciseId: exerciseId,
                 name: exerciseId,
-                currentWeight: currentWeight,
-                maxWeight: maxWeight,
-                fatigueLevel: fatigueLevel,
+                fatigueLevels: levels,
                 period: fatiguePeriod
             )
         }
@@ -545,6 +500,66 @@ class TrainingStatsViewModel: ObservableObject {
             }
             
             return monthlyVolumes.reversed()
+        }
+    }
+    
+    private func calculateFatigue(exerciseId: String, period: ComparisonPeriod) -> [Double] {
+        let calendar = Calendar.current
+        let today = Date()
+        let exerciseWorkouts = workouts.filter { $0.exerciseId == exerciseId }
+        let maxWeight = exerciseWorkouts.map { $0.weight }.max() ?? 0 // PR
+        
+        switch period {
+        case .week:
+            // 获取一周内每天的训练重量，计算相对于PR的百分比
+            let weekStart = calendar.date(byAdding: .day, value: -7, to: today)!
+            let weekWorkouts = exerciseWorkouts.filter { $0.date >= weekStart }
+            
+            // 按日期分组
+            let workoutsByDay = Dictionary(grouping: weekWorkouts) { workout in
+                calendar.startOfDay(for: workout.date)
+            }
+            
+            // 获取每天的训练重量相对于PR的百分比
+            return workoutsByDay.values.map { dayWorkouts in
+                let weights = dayWorkouts.map { $0.weight }
+                let maxDayWeight = weights.max() ?? 0
+                return maxWeight > 0 ? (maxDayWeight / maxWeight * 100) : 0
+            }.sorted()
+            
+        case .month:
+            // 获取每周的平均疲劳度
+            var weeklyFatigues: [Double] = []
+            for weekOffset in 0..<4 {
+                let weekEnd = calendar.date(byAdding: .day, value: -7 * weekOffset, to: today)!
+                let weekStart = calendar.date(byAdding: .day, value: -7, to: weekEnd)!
+                let weekWorkouts = exerciseWorkouts.filter { $0.date >= weekStart && $0.date <= weekEnd }
+                
+                // 计算这周所有训练重量相对于PR的百分比的平均值
+                if !weekWorkouts.isEmpty {
+                    let weeklyPercentages = weekWorkouts.map { $0.weight / maxWeight * 100 }
+                    let weeklyAverage = weeklyPercentages.reduce(0, +) / Double(weeklyPercentages.count)
+                    weeklyFatigues.append(weeklyAverage)
+                }
+            }
+            return weeklyFatigues
+            
+        case .quarter:
+            // 获取每月的平均疲劳度
+            var monthlyFatigues: [Double] = []
+            for monthOffset in 0..<3 {
+                let monthEnd = calendar.date(byAdding: .month, value: -monthOffset, to: today)!
+                let monthStart = calendar.date(byAdding: .month, value: -1, to: monthEnd)!
+                let monthWorkouts = exerciseWorkouts.filter { $0.date >= monthStart && $0.date <= monthEnd }
+                
+                // 计算这月所有训练重量相对于PR的百分比的平均值
+                if !monthWorkouts.isEmpty {
+                    let monthlyPercentages = monthWorkouts.map { $0.weight / maxWeight * 100 }
+                    let monthlyAverage = monthlyPercentages.reduce(0, +) / Double(monthlyPercentages.count)
+                    monthlyFatigues.append(monthlyAverage)
+                }
+            }
+            return monthlyFatigues
         }
     }
 } 

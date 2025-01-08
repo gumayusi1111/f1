@@ -92,47 +92,74 @@ class TrainingViewModel: ObservableObject {
         logger.info("- 用户ID: \(userId)")
         
         do {
-            let snapshot = try await db.collection("users")
-                .document(userId)
-                .collection("trainings")
-                .document("2025-01-07")  // 这里可以改为动态日期
-                .collection("records")
-                .getDocuments()
+            // 获取最近7天的日期范围
+            let today = Date()
+            let calendar = Calendar.current
+            let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: today)!
             
-            let loadedWorkouts = snapshot.documents.compactMap { document -> WorkoutRecord? in
-                let data = document.data()
+            // 创建日期格式化器
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            
+            // 使用 async let 并发加载每天的数据
+            let dailyWorkoutArrays = try await withThrowingTaskGroup(of: [WorkoutRecord].self) { group in
+                for date in stride(from: today, through: sevenDaysAgo, by: -86400) {
+                    let dateString = dateFormatter.string(from: date)
+                    group.addTask {
+                        let snapshot = try await self.db.collection("users")
+                            .document(userId)
+                            .collection("trainings")
+                            .document(dateString)
+                            .collection("records")
+                            .getDocuments()
+                        
+                        return snapshot.documents.compactMap { document -> WorkoutRecord? in
+                            let data = document.data()
+                            
+                            guard let type = data["type"] as? String,
+                                  let weight = (data["weight"] as? Double) ?? (data["weight"] as? Int).map(Double.init),
+                                  let date = (data["date"] as? Timestamp)?.dateValue(),
+                                  let sets = data["sets"] as? Int
+                            else { return nil }
+                            
+                            return WorkoutRecord(
+                                id: document.documentID,
+                                exerciseId: type,
+                                weight: weight,
+                                date: date,
+                                sets: sets
+                            )
+                        }
+                    }
+                }
                 
-                guard let type = data["type"] as? String,
-                      let weight = (data["weight"] as? Double) ?? (data["weight"] as? Int).map(Double.init),
-                      let date = (data["date"] as? Timestamp)?.dateValue(),
-                      let sets = data["sets"] as? Int
-                else { return nil }
-                
-                return WorkoutRecord(
-                    id: document.documentID,
-                    exerciseId: type,
-                    weight: weight,
-                    date: date,
-                    sets: sets
-                )
+                // 收集所有天的结果
+                var allWorkouts: [[WorkoutRecord]] = []
+                for try await dayWorkouts in group {
+                    allWorkouts.append(dayWorkouts)
+                }
+                return allWorkouts
             }
             
-            logger.info("✅ 成功加载 \(loadedWorkouts.count) 条训练记录")
+            // 合并所有天的数据
+            let allWorkouts = dailyWorkoutArrays.flatMap { $0 }
             
+            logger.info("✅ 成功加载 \(allWorkouts.count) 条训练记录")
+            
+            // 在主线程更新 UI
             await MainActor.run {
-                self.workouts = loadedWorkouts
-                self.workoutsByDate = Dictionary(grouping: loadedWorkouts) { workout in
+                self.workouts = allWorkouts
+                self.workoutsByDate = Dictionary(grouping: allWorkouts) { workout in
                     self.calendar.startOfDay(for: workout.date)
                 }
                 
                 // 打印加载的记录
-                loadedWorkouts.forEach { workout in
+                allWorkouts.forEach { workout in
                     self.logger.info("  * \(workout.exerciseId): \(workout.weight)kg × \(workout.sets ?? 1)组")
                 }
             }
         } catch {
             logger.error("❌ 加载训练记录失败: \(error.localizedDescription)")
-            // 应该添加错误状态处理
         }
     }
 } 
