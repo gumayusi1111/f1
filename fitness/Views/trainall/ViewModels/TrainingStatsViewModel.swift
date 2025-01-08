@@ -284,7 +284,6 @@ class TrainingStatsViewModel: ObservableObject {
             // 获取最近7天的数据并按日期分组
             let calendar = Calendar.current
             let today = Date()
-            let weekAgo = calendar.date(byAdding: .day, value: -7, to: today)!
             
             // 创建最近7天的日期数组
             var dates: [Date] = []

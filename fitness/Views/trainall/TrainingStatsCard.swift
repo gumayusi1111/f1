@@ -26,7 +26,10 @@ struct TrainingStatsCard: View {
                     FrequencySection(viewModel: viewModel, stats: viewModel.frequencyStats)
                     
                     // 训练趋势
-                    ExerciseTrendView(stats: viewModel.selectedExerciseStats)
+                    ExerciseTrendView(
+                        stats: viewModel.selectedExerciseStats,
+                        exerciseId: viewModel.selectedExercise
+                    )
                     
                     // 容量分析
                     VolumeSection(viewModel: viewModel, stats: viewModel.volumeStats)
