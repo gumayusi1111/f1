@@ -25,6 +25,12 @@ struct TrainingStatsCard: View {
                     // 频率分析
                     FrequencySection(viewModel: viewModel, stats: viewModel.frequencyStats)
                     
+                    // 疲劳度分析
+                    FatigueSection(
+                        viewModel: viewModel,
+                        stats: viewModel.fatigueStats
+                    )
+                    
                     // 训练趋势
                     ExerciseTrendView(
                         stats: viewModel.selectedExerciseStats,
