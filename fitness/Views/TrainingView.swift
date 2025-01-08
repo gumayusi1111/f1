@@ -22,16 +22,6 @@ struct TrainingView: View {
                     TrainingStatsCard(workouts: viewModel.workouts)
                 }
                 
-                // 训练记录列表
-                LazyVStack(spacing: 12) {
-                    ForEach(viewModel.workoutsByDate.keys.sorted(by: >), id: \.self) { date in
-                        if let dayWorkouts = viewModel.workoutsByDate[date] {
-                            TrainingDayRow(date: date, workouts: dayWorkouts)
-                        }
-                    }
-                }
-                .padding()
-                
                 if isLoading {
                     ProgressView()
                 }
