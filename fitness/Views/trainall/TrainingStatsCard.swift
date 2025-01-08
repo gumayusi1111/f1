@@ -1,129 +1,157 @@
 import SwiftUI
-import Charts
 
 struct TrainingStatsCard: View {
-    let workouts: [WorkoutRecord]
+    @StateObject private var viewModel: TrainingStatsViewModel
     
-    private var weeklyVolume: Double {
-        TrainingAnalytics.calculateVolume(workouts: workouts, in: .week)
-    }
-    
-    private var monthlyVolume: Double {
-        TrainingAnalytics.calculateVolume(workouts: workouts, in: .month)
-    }
-    
-    private var quarterlyVolume: Double {
-        TrainingAnalytics.calculateVolume(workouts: workouts, in: .quarter)
-    }
-    
-    private var prs: (bench: Double, squat: Double, deadlift: Double) {
-        let benchPR = workouts.filter { $0.exerciseId == "bench" }.map { $0.weight }.max() ?? 0
-        let squatPR = workouts.filter { $0.exerciseId == "squat" }.map { $0.weight }.max() ?? 0
-        let deadliftPR = workouts.filter { $0.exerciseId == "deadlift" }.map { $0.weight }.max() ?? 0
-        return (benchPR, squatPR, deadliftPR)
+    init(workouts: [WorkoutRecord]) {
+        let vm = TrainingStatsViewModel(workouts: workouts)
+        _viewModel = StateObject(wrappedValue: vm)
+        
+        // 延迟设置加载状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            vm.isLoading = false
+        }
     }
     
     var body: some View {
-        VStack(spacing: 16) {
-            volumeStatsSection
-            fatigueSection
-            progressSection
+        Group {
+            if viewModel.isLoading {
+                TrainingStatsSkeletonView()
+            } else {
+                VStack(alignment: .leading, spacing: 16) {
+                    // 项目选择器
+                    MainExerciseSelector(viewModel: viewModel)
+                    
+                    // 频率分析
+                    FrequencySection(viewModel: viewModel, stats: viewModel.frequencyStats)
+                    
+                    // 当前项目统计
+                    ExerciseStatsView(stats: viewModel.selectedExerciseStats)
+                    
+                    // 训练趋势
+                    ExerciseTrendView(stats: viewModel.selectedExerciseStats)
+                    
+                    // 容量分析
+                    VolumeSection(viewModel: viewModel, stats: viewModel.volumeStats)
+                }
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(12)
+                .shadow(color: .black.opacity(0.1), radius: 5)
+            }
+        }
+        .animation(.default, value: viewModel.isLoading)
+    }
+}
+
+// 项目统计视图
+private struct ExerciseStatsView: View {
+    let stats: TrainingStatsViewModel.ExerciseStats
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // 最大重量和当前重量
+            HStack(spacing: 20) {
+                WeightMetric(
+                    title: "最大重量",
+                    value: stats.maxWeight,
+                    unit: "kg"
+                )
+                
+                WeightMetric(
+                    title: "当前重量",
+                    value: stats.currentWeight,
+                    unit: "kg",
+                    progress: stats.progress
+                )
+            }
+            
+            // 训练容量
+            HStack(spacing: 20) {
+                VolumeMetric(
+                    title: "周容量",
+                    value: stats.weeklyVolume,
+                    unit: "kg"
+                )
+                
+                VolumeMetric(
+                    title: "月平均",
+                    value: stats.weeklyAverageVolume,
+                    unit: "kg/周"
+                )
+            }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(Color(.systemGray6))
         .cornerRadius(12)
-        .shadow(radius: 2)
     }
+}
+
+// 重量指标
+private struct WeightMetric: View {
+    let title: String
+    let value: Double
+    let unit: String
+    var progress: Double?
     
-    private var volumeStatsSection: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("训练容量统计")
-                .font(.headline)
-            
-            HStack(spacing: 16) {
-                volumeStatItem(title: "本周", value: weeklyVolume)
-                volumeStatItem(title: "本月", value: monthlyVolume)
-                volumeStatItem(title: "本季", value: quarterlyVolume)
-            }
-        }
-    }
-    
-    private var fatigueSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("疲劳度指示")
-                .font(.headline)
-            
-            HStack(spacing: 16) {
-                fatigueBar(name: "卧推", current: workouts.last { $0.exerciseId == "bench" }?.weight ?? 0, pr: prs.bench)
-                fatigueBar(name: "深蹲", current: workouts.last { $0.exerciseId == "squat" }?.weight ?? 0, pr: prs.squat)
-                fatigueBar(name: "硬拉", current: workouts.last { $0.exerciseId == "deadlift" }?.weight ?? 0, pr: prs.deadlift)
-            }
-        }
-    }
-    
-    private var progressSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("进步曲线")
-                .font(.headline)
-            
-            Chart {
-                ForEach(["bench", "squat", "deadlift"], id: \.self) { exerciseId in
-                    let progressData = TrainingAnalytics.getProgressData(workouts: workouts, exerciseId: exerciseId)
-                    ForEach(progressData, id: \.date) { item in
-                        LineMark(
-                            x: .value("Date", item.date),
-                            y: .value("Weight", item.weight)
-                        )
-                        .foregroundStyle(by: .value("Exercise", exerciseId))
-                    }
-                }
-            }
-            .frame(height: 200)
-        }
-    }
-    
-    private func volumeStatItem(title: String, value: Double) -> some View {
-        VStack(alignment: .leading) {
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text("\(Int(value))kg")
-                .font(.system(.body, design: .rounded))
-                .bold()
-        }
-    }
-    
-    private func fatigueBar(name: String, current: Double, pr: Double) -> some View {
-        let percentage = TrainingAnalytics.calculateFatigue(currentWeight: current, pr: pr)
-        
-        return VStack(alignment: .leading) {
-            Text(name)
-                .font(.caption)
             
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
-                    
-                    Rectangle()
-                        .fill(fatigueColor(for: percentage))
-                        .frame(width: geometry.size.width * percentage / 100)
-                }
+            HStack(alignment: .lastTextBaseline, spacing: 4) {
+                Text(String(format: "%.1f", value))
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text(unit)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
-            .frame(height: 8)
-            .cornerRadius(4)
             
-            Text("\(Int(percentage))%")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+            if let progress = progress {
+                Text("\(Int(progress))% 维持")
+                    .font(.caption)
+                    .foregroundColor(progressColor(progress))
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     
-    private func fatigueColor(for percentage: Double) -> Color {
-        switch percentage {
-        case 0..<60: return .green
-        case 60..<80: return .yellow
-        default: return .red
+    private func progressColor(_ value: Double) -> Color {
+        switch value {
+        case 0: return .gray
+        case ..<60: return .red
+        case 60..<80: return .orange
+        case 80..<90: return .blue
+        default: return .green
         }
+    }
+}
+
+// 容量指标
+private struct VolumeMetric: View {
+    let title: String
+    let value: Double
+    let unit: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            HStack(alignment: .lastTextBaseline, spacing: 4) {
+                Text(String(format: "%.0f", value))
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text(unit)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 } 
