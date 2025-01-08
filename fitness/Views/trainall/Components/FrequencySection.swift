@@ -36,6 +36,22 @@ struct FrequencySection: View {
                     unit: "次"
                 )
             }
+            
+            // 添加频率提示
+            let (message, isAchieved) = ExerciseType.getFrequencyMessage(
+                exerciseId: viewModel.selectedExercise,
+                currentFrequency: stats.current,
+                period: stats.period
+            )
+            
+            if !message.isEmpty {
+                HStack(spacing: 4) {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundColor(isAchieved ? .green : .orange)
+                }
+                .padding(.top, 8)
+            }
         }
         .padding()
         .background(Color(.systemGray6))
