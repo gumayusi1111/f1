@@ -3009,7 +3009,7 @@ struct WeightView: View {
             (hour: 23, minute: 59, identifier: "endOfDayWeightCheck", title: "每日体重记录提醒", body: "今天还没有记录体重，记得保持每日记录习惯哦")
         ]
         
-        let calendar = Calendar.current
+       
         
         for reminder in reminders {
             var dateComponents = DateComponents()
