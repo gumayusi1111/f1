@@ -4,160 +4,152 @@ import FirebaseFirestore
 struct FriendListView: View {
     @State private var friends: [User] = []
     @State private var isLoading = false
+    @State private var selectedFriend: User? = nil
     @AppStorage("userId") private var userId: String = ""
     
     var body: some View {
         List {
-            ForEach(friends) { friend in
-                HStack {
-                    // 头像
-                    if let avatarData = Data(base64Encoded: friend.avatar_base64 ?? ""),
-                       let uiImage = UIImage(data: avatarData) {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 40, height: 40)
-                            .clipShape(Circle())
-                    } else {
-                        Image(systemName: "person.circle.fill")
-                            .resizable()
-                            .frame(width: 40, height: 40)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(friend.username)
-                            .font(.headline)
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            } else if friends.isEmpty {
+                Text("暂无好友")
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            } else {
+                ForEach(friends) { friend in
+                    HStack {
+                        // 头像
+                        if let avatarData = Data(base64Encoded: friend.avatar_base64 ?? ""),
+                           let uiImage = UIImage(data: avatarData) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 40, height: 40)
+                                .clipShape(Circle())
+                                .onTapGesture {
+                                    showFriendDetails(friend)
+                                }
+                        } else {
+                            Image(systemName: "person.circle.fill")
+                                .resizable()
+                                .frame(width: 40, height: 40)
+                                .foregroundColor(.gray)
+                                .onTapGesture {
+                                    showFriendDetails(friend)
+                                }
+                        }
                         
-                        Text("ID: \(friend.id)")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        
-                        // 添加状态指示器
-                        HStack(spacing: 6) {
-                            // 状态图标
-                            Image(systemName: statusIcon(friend.onlineStatus))
-                                .foregroundColor(statusColor(friend.onlineStatus))
-                                .font(.system(size: 12))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(friend.username)
+                                .font(.headline)
                             
-                            // 状态文本
-                            Text(statusText(friend.onlineStatus))
+                            Text("ID: \(friend.id)")
                                 .font(.caption)
                                 .foregroundColor(.gray)
                         }
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        removeFriend(friend)
-                    }) {
-                        Image(systemName: "person.badge.minus")
-                            .foregroundColor(.red)
                     }
                 }
             }
         }
         .navigationTitle("好友列表")
+        .sheet(item: $selectedFriend) { friend in
+            NavigationView {
+                FriendDetailView(friend: friend)
+            }
+        }
         .onAppear {
             loadFriends()
         }
         .refreshable {
             loadFriends()
         }
-        .overlay(Group {
-            if isLoading {
-                ProgressView()
-            }
-        })
-    }
-    
-    private func statusColor(_ status: User.OnlineStatus) -> Color {
-        switch status {
-        case .online:
-            return .green
-        case .away:
-            return .yellow
-        case .offline:
-            return .gray
-        }
     }
     
     private func loadFriends() {
+        print("\n========== 加载好友列表 ==========")
+        print("当前用户ID: \(userId)")
+        
         isLoading = true
         let db = Firestore.firestore()
         
-        // 1. 获取当前用户的好友ID列表
         db.collection("users").document(userId).getDocument { snapshot, error in
-            guard let data = snapshot?.data(),
-                  let friendIds = data["friendIds"] as? [String] else {
-                isLoading = false
+            isLoading = false
+            
+            if let error = error {
+                print("❌ 加载好友列表失败: \(error.localizedDescription)")
                 return
             }
             
-            // 2. 如果没有好友，直接返回
-            if friendIds.isEmpty {
-                friends = []
-                isLoading = false
-                return
+            if let data = snapshot?.data(),
+               let friendIds = data["friendIds"] as? [String] {
+                loadFriendDetails(friendIds)
             }
-            
-            // 3. 获取所有好友的详细信息
-            db.collection("users")
-                .whereField(FieldPath.documentID(), in: friendIds)
-                .getDocuments { snapshot, error in
-                    defer { isLoading = false }
-                    
-                    if let error = error {
-                        print("Error loading friends: \(error)")
-                        return
-                    }
-                    
-                    friends = snapshot?.documents.compactMap { doc -> User? in
-                        try? doc.data(as: User.self)
-                    } ?? []
-                }
         }
     }
     
-    private func removeFriend(_ friend: User) {
+    private func loadFriendDetails(_ friendIds: [String]) {
+        print("\n开始加载好友详细信息...")
+        print("好友ID列表: \(friendIds)")
+        
         let db = Firestore.firestore()
+        let group = DispatchGroup()
+        var loadedFriends: [User] = []
         
-        // 1. 从当前用户的好友列表中移除
-        db.collection("users").document(userId).updateData([
-            "friendIds": FieldValue.arrayRemove([friend.id])
-        ])
+        for friendId in friendIds {
+            group.enter()
+            print("正在加载好友ID: \(friendId)")
+            
+            db.collection("users").document(friendId).getDocument { snapshot, error in
+                defer { group.leave() }
+                
+                if let error = error {
+                    print("❌ 加载好友信息失败: \(error.localizedDescription)")
+                    return
+                }
+                
+                do {
+                    if var friend = try snapshot?.data(as: User.self) {
+                        friend.id = snapshot?.documentID ?? ""  // 确保设置正确的文档 ID
+                        print("✅ 成功加载好友: \(friend.username), ID: \(friend.id)")
+                        loadedFriends.append(friend)
+                    } else {
+                        print("❌ 无法解码好友数据")
+                    }
+                } catch {
+                    print("❌ 解码失败: \(error.localizedDescription)")
+                    
+                    // 尝试手动创建用户对象
+                    if let data = snapshot?.data(),
+                       let name = data["name"] as? String {
+                        let friend = User(
+                            id: snapshot?.documentID ?? "",
+                            username: name,
+                            avatar_base64: data["avatar_base64"] as? String,
+                            onlineStatus: .offline,
+                            lastStatusUpdate: (data["lastStatusUpdate"] as? Timestamp)?.dateValue(),
+                            friendIds: data["friendIds"] as? [String] ?? []
+                        )
+                        print("✅ 手动创建好友: \(friend.username), ID: \(friend.id)")
+                        loadedFriends.append(friend)
+                    }
+                }
+            }
+        }
         
-        // 2. 从好友的好友列表中移除当前用户
-        db.collection("users").document(friend.id).updateData([
-            "friendIds": FieldValue.arrayRemove([userId])
-        ]) { error in
-            if error == nil {
-                // 3. 更新本地列表
-                friends.removeAll { $0.id == friend.id }
+        group.notify(queue: .main) {
+            friends = loadedFriends
+            print("\n最终加载结果:")
+            print("- 成功加载好友数量: \(friends.count)")
+            friends.forEach { friend in
+                print("- 好友: \(friend.username), ID: \(friend.id)")
             }
         }
     }
     
-    private func statusIcon(_ status: User.OnlineStatus) -> String {
-        switch status {
-        case .online:
-            return "circle.fill"
-        case .away:
-            return "moon.fill"
-        case .offline:
-            return "circle.slash"
-        }
-    }
-    
-    private func statusText(_ status: User.OnlineStatus) -> String {
-        switch status {
-        case .online:
-            return "在线"
-        case .away:
-            return "离开"
-        case .offline:
-            return "离线"
-        }
+    private func showFriendDetails(_ friend: User) {
+        selectedFriend = friend
     }
 } 

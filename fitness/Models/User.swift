@@ -29,13 +29,11 @@ struct User: Identifiable, Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         
-        // 尝试解码 id，如果不存在则使用空字符串（后续会被设置为文档 ID）
+        // 尝试解码 id，如果不存在则使用空字符串
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
         
-        // 解码用户名（从 name 字段）
+        // 解码其他字段
         username = try container.decode(String.self, forKey: .username)
-        
-        // 解码可选字段
         avatar_base64 = try container.decodeIfPresent(String.self, forKey: .avatar_base64)
         onlineStatus = try container.decodeIfPresent(OnlineStatus.self, forKey: .onlineStatus) ?? .offline
         lastStatusUpdate = try container.decodeIfPresent(Date.self, forKey: .lastStatusUpdate)
@@ -44,8 +42,8 @@ struct User: Identifiable, Codable {
     
     // 编码键
     enum CodingKeys: String, CodingKey {
-        case id
-        case username = "name"  // 映射到 Firestore 中的 'name' 字段
+        case id = "id"
+        case username = "name"
         case avatar_base64
         case onlineStatus
         case lastStatusUpdate
