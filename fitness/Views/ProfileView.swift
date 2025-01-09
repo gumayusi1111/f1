@@ -33,12 +33,26 @@ struct ProfileView: View {
                     HStack {
                         avatarImage
                         
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            // 用户名
                             Text(userName)
                                 .font(.headline)
+                            
+                            // 用户 ID
                             Text("ID: \(userId)")
                                 .font(.caption)
                                 .foregroundColor(.gray)
+                            
+                            // 在线状态
+                            HStack(spacing: 6) {
+                                Image(systemName: statusIcon(selectedStatus))
+                                    .foregroundColor(statusColor(selectedStatus))
+                                    .font(.system(size: 12))
+                                
+                                Text(statusText(selectedStatus))
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
                         }
                     }
                     .padding(.vertical, 10)
@@ -401,6 +415,30 @@ struct ProfileView: View {
         selectedImage = nil
         cachedUIImage = nil
         ImageCache.shared.removeImage(forKey: userId)
+    }
+    
+    private func statusIcon(_ status: User.OnlineStatus) -> String {
+        switch status {
+        case .online: return "circle.fill"
+        case .away: return "moon.fill"
+        case .offline: return "circle.slash"
+        }
+    }
+    
+    private func statusColor(_ status: User.OnlineStatus) -> Color {
+        switch status {
+        case .online: return .green
+        case .away: return .yellow
+        case .offline: return .gray
+        }
+    }
+    
+    private func statusText(_ status: User.OnlineStatus) -> String {
+        switch status {
+        case .online: return "在线"
+        case .away: return "离开"
+        case .offline: return "离线"
+        }
     }
 }
 
