@@ -23,6 +23,9 @@ struct ProfileView: View {
     
     @State private var cachedUIImage: UIImage?
     
+    // 1. 添加新的持久化存储键
+    private let AVATAR_CACHE_KEY = "userAvatarCache_"
+    
     var body: some View {
         NavigationView {
             List {
@@ -131,74 +134,56 @@ struct ProfileView: View {
     }
     
     private func logout() {
-        // 保存最后登录的用户信息
+        print("\n========== 开始退出登录 ==========")
+        
+        // 1. 先禁用界面交互,防止重复操作
+        isUploading = true
+        
+        // 2. 保存最后登录的用户信息
         lastLoginUser = userName
+        print("✅ 保存最后登录用户: \(userName)")
         
-        // 清除当前登录状态
-        userId = ""
-        userName = ""
+        // 3. 清除头像缓存前，确保保存到持久化存储
+        let cacheKey = AVATAR_CACHE_KEY + userId
+        if let currentImage = cachedUIImage,
+           let imageData = currentImage.jpegData(compressionQuality: 0.5) {
+            UserDefaults.standard.set(imageData, forKey: cacheKey)
+        }
         
-        // 清除其他需要清除的数据
+        // 清除内存缓存
+        cachedAvatarData = Data()
+        localAvatarData = nil
+        selectedImage = nil
+        cachedUIImage = nil
+        ImageCache.shared.getImage(forKey: userId)
+        
+        // 4. 清除其他数据
         friends = []
+        print("✅ 清除好友列表")
+        
+        // 5. 使用延迟确保其他操作完成后再清除用户凭证
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // 清除用户凭证
+            self.userName = ""
+            self.userId = ""
+            
+            // 恢复界面交互
+            self.isUploading = false
+            
+            print("✅ 清除用户凭证")
+            print("========== 退出登录完成 ==========\n")
+        }
     }
     
     private func handleImageSelection(_ image: UIImage) {
         print("\n🔄 选择了新头像")
-        updateAvatar(with: image)  // 使用新的更新方法
+        updateAvatar(with: image)
     }
     
     private func showError(message: String) {
         errorMessage = message
         showError = true
         isUploading = false
-    }
-    
-    private func saveImage(_ image: UIImage) {
-        print("\n📸 开始保存头像...")
-        isUploading = true
-        
-        guard let imageData = compressImage(image, maxSizeKB: 100) else {
-            print("❌ 图片压缩失败")
-            showError(message: "图片处理失败")
-            return
-        }
-        
-        let sizeKB = Double(imageData.count) / 1024.0
-        print("📊 图片信息:")
-        print("  - 大小: \(String(format: "%.2f", sizeKB))KB")
-        
-        if sizeKB > 100 {
-            print("❌ 图片太大")
-            showError(message: "图片太大，请选择较小的图片")
-            return
-        }
-        
-        // 保存到本地
-        localAvatarData = imageData
-        
-        // 转换为 Base64 字符串
-        let base64String = imageData.base64EncodedString()
-        
-        // 保存到 Firestore
-        let db = Firestore.firestore()
-        db.collection("users")
-            .document(userId)
-            .setData([
-                "avatar_base64": base64String
-            ], merge: true) { error in
-                if let error = error {
-                    showError(message: "保存失败：\(error.localizedDescription)")
-                } else {
-                    DispatchQueue.main.async {
-                        userAvatar = base64String
-                        isUploading = false
-                        showSuccess = true
-                    }
-                    if let image = UIImage(data: imageData) {
-                        ImageCache.shared.setImage(image, forKey: userId)
-                    }
-                }
-            }
     }
     
     private func compressImage(_ image: UIImage, maxSizeKB: Int = 100) -> Data? {
@@ -248,83 +233,99 @@ struct ProfileView: View {
     
     private func loadAvatar() {
         print("\n========== 开始加载头像 ==========")
-        print("⏰ 当前时间: \(Date())")
-        print("📅 上次同步时间: \(lastAvatarSyncDate)")
         
-        let shouldSyncData = !Calendar.current.isDateInToday(lastAvatarSyncDate)
-        print("🔍 检查是否需要同步:")
-        print("  - 上次同步是否是今天: \(!shouldSyncData)")
-        print("  - 需要同步: \(shouldSyncData)")
-        
-        if shouldSyncData {
-            print("\n🔄 从数据库加载头像...")
-            let db = Firestore.firestore()
-            db.collection("users").document(userId).getDocument { snapshot, error in
-                if let error = error {
-                    print("❌ 数据库加载失败: \(error)")
-                    print("📦 使用本地缓存作为备选")
-                    loadAvatarFromCache()
-                    return
-                }
-                
-                if let data = snapshot?.data(),
-                   let avatarBase64 = data["avatar_base64"] as? String,
-                   let imageData = Data(base64Encoded: avatarBase64) {
-                    print("✅ 数据库加载成功")
-                    saveAvatarToCache(imageData)
-                    self.lastAvatarSyncDate = Date()
-                }
-            }
-        } else {
-            print("\n📦 使用本地缓存:")
-            loadAvatarFromCache()
+        // 1. 先尝试从本地持久化存储加载
+        let cacheKey = AVATAR_CACHE_KEY + userId
+        if let cachedData = UserDefaults.standard.data(forKey: cacheKey),
+           let cachedImage = UIImage(data: cachedData) {
+            print("✅ 从本地存储加载头像成功")
+            self.cachedAvatarData = cachedData
+            self.cachedUIImage = cachedImage
+            ImageCache.shared.setImage(cachedImage, forKey: userId)
+            return
         }
-    }
-    
-    private func saveAvatarToCache(_ imageData: Data) {
-        print("\n💾 保存头像到本地缓存:")
-        print("  - 数据大小: \(ByteCountFormatter.string(fromByteCount: Int64(imageData.count), countStyle: .file))")
         
-        cachedAvatarData = imageData
-        print("✅ 头像成功保存到缓存")
-    }
-    
-    private func loadAvatarFromCache() {
-        print("\n📂 从本地缓存加载头像:")
-        print("  - 缓存大小: \(ByteCountFormatter.string(fromByteCount: Int64(cachedAvatarData.count), countStyle: .file))")
-        
-        if !cachedAvatarData.isEmpty {
-            if let image = UIImage(data: cachedAvatarData) {
-                self.cachedUIImage = image  // 使用 cachedUIImage 而不是 avatarImage
-                print("✅ 成功从缓存加载头像")
+        // 2. 如果本地没有，从 Firestore 加载
+        print("📥 从服务器加载头像...")
+        let db = Firestore.firestore()
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            if let error = error {
+                print("❌ 加载失败: \(error.localizedDescription)")
+                return
             }
-        } else {
-            print("⚠️ 缓存中没有头像数据")
+            
+            if let data = snapshot?.data(),
+               let avatarBase64 = data["avatar_base64"] as? String,
+               let imageData = Data(base64Encoded: avatarBase64),
+               let image = UIImage(data: imageData) {
+                
+                // 保存到本地存储
+                UserDefaults.standard.set(imageData, forKey: cacheKey)
+                
+                // 更新内存缓存
+                DispatchQueue.main.async {
+                    self.cachedAvatarData = imageData
+                    self.cachedUIImage = image
+                    ImageCache.shared.setImage(image, forKey: self.userId)
+                    print("✅ 从服务器加载头像成功")
+                }
+            }
         }
     }
     
     private func updateAvatar(with image: UIImage) {
-        guard let imageData = image.jpegData(compressionQuality: 0.5) else { return }
         print("\n🔄 开始更新头像...")
+        isUploading = true  // 显示加载状态
         
-        // 1. 先更新本地显示和缓存
-        selectedImage = image  // 使用 selectedImage 而不是 avatarImage
-        saveAvatarToCache(imageData)
+        // 1. 压缩图片
+        guard let imageData = compressImage(image, maxSizeKB: 100) else {
+            print("❌ 图片压缩失败")
+            showError(message: "图片处理失败")
+            return
+        }
         
-        // 2. 然后更新到数据库
+        let sizeKB = Double(imageData.count) / 1024.0
+        print("📊 图片大小: \(String(format: "%.2f", sizeKB))KB")
+        
+        if sizeKB > 100 {
+            print("❌ 图片太大")
+            showError(message: "图片太大，请选择较小的图片")
+            return
+        }
+        
+        // 2. 保存到本地持久化存储
+        let cacheKey = AVATAR_CACHE_KEY + userId
+        UserDefaults.standard.set(imageData, forKey: cacheKey)
+        
+        // 3. 更新内存缓存
+        cachedAvatarData = imageData
+        selectedImage = image
+        cachedUIImage = image
+        ImageCache.shared.setImage(image, forKey: userId)
+        
+        print("💾 保存到本地缓存成功")
+        
+        // 4. 更新到 Firestore
         let base64String = imageData.base64EncodedString()
-        
         let db = Firestore.firestore()
+        
+        print("📤 开始上传到服务器...")
         db.collection("users").document(userId).updateData([
             "avatar_base64": base64String,
             "updatedAt": FieldValue.serverTimestamp()
         ]) { error in
-            if let error = error {
-                print("❌ 头像更新失败: \(error)")
-                return
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ 服务器更新失败: \(error.localizedDescription)")
+                    self.showError(message: "上传失败：\(error.localizedDescription)")
+                } else {
+                    print("✅ 服务器更新成功")
+                    self.userAvatar = base64String
+                    self.lastAvatarSyncDate = Date()
+                    self.showSuccess = true
+                }
+                self.isUploading = false
             }
-            print("✅ 头像更新成功")
-            self.lastAvatarSyncDate = Date()
         }
     }
     
