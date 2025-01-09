@@ -5,6 +5,11 @@ struct OtherExercisesCard: View {
     let workouts: [String: [WorkoutRecord]]
     @State private var selectedExercise: String?
     
+    init(workouts: [String: [WorkoutRecord]]) {
+        self.workouts = workouts
+        _selectedExercise = State(initialValue: workouts.keys.sorted().first)
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // 标题和选择器
