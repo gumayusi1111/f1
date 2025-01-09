@@ -11,7 +11,6 @@ struct ProfileView: View {
     @AppStorage("lastAvatarSyncDate") private var lastAvatarSyncDate: Date = .distantPast
     
     @State private var friends: [User] = []
-    @State private var showAddFriend = false
     @State private var showLogoutAlert = false
     
     @State private var showingImagePicker = false
@@ -22,6 +21,7 @@ struct ProfileView: View {
     @State private var showSuccess = false
     
     @State private var cachedUIImage: UIImage?
+    @State private var selectedStatus: User.OnlineStatus = .offline
     
     // 1. 添加新的持久化存储键
     private let AVATAR_CACHE_KEY = "userAvatarCache_"
@@ -51,20 +51,49 @@ struct ProfileView: View {
                             .foregroundColor(.blue)
                     }
                     .padding(.top, 8)
+                    
+                    Picker("在线状态", selection: $selectedStatus) {
+                        Text("在线")
+                            .tag(User.OnlineStatus.online)
+                        Text("离开")
+                            .tag(User.OnlineStatus.away)
+                        Text("离线")
+                            .tag(User.OnlineStatus.offline)
+                    }
+                    .onChange(of: selectedStatus) { oldValue, newValue in
+                        updateOnlineStatus(newValue)
+                    }
                 }
                 
-                Section("好友列表") {
-                    ForEach(friends) { friend in
+                Section("社交") {
+                    NavigationLink {
+                        AddFriendView()
+                    } label: {
                         HStack {
-                            Text(friend.name)
+                            Text("添加好友")
                             Spacer()
-                            Text("查看")
-                                .foregroundColor(.blue)
+                            Image(systemName: "person.badge.plus")
                         }
                     }
                     
-                    Button("添加好友") {
-                        showAddFriend = true
+                    NavigationLink {
+                        FriendListView()
+                    } label: {
+                        HStack {
+                            Text("好友列表")
+                            Spacer()
+                            Image(systemName: "person.2")
+                        }
+                    }
+                    
+                    NavigationLink {
+                        FriendRequestsView()
+                    } label: {
+                        HStack {
+                            Text("好友请求")
+                            Spacer()
+                            Image(systemName: "person.2.circle")
+                        }
                     }
                 }
                 
@@ -83,9 +112,6 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("个人中心")
-            .sheet(isPresented: $showAddFriend) {
-                AddFriendView()
-            }
             .alert("确认退出", isPresented: $showLogoutAlert) {
                 Button("取消", role: .cancel) { }
                 Button("退出", role: .destructive) {
@@ -155,7 +181,7 @@ struct ProfileView: View {
         localAvatarData = nil
         selectedImage = nil
         cachedUIImage = nil
-        ImageCache.shared.getImage(forKey: userId)
+        _ = ImageCache.shared.getImage(forKey: userId)
         
         // 4. 清除其他数据
         friends = []
@@ -173,6 +199,14 @@ struct ProfileView: View {
             print("✅ 清除用户凭证")
             print("========== 退出登录完成 ==========\n")
         }
+        
+        // 更新状态为离线
+        let db = Firestore.firestore()
+        db.collection("users").document(userId)
+            .updateData([
+                "onlineStatus": User.OnlineStatus.offline.rawValue,
+                "lastStatusUpdate": FieldValue.serverTimestamp()
+            ])
     }
     
     private func handleImageSelection(_ image: UIImage) {
@@ -206,18 +240,21 @@ struct ProfileView: View {
     
     private var avatarImage: some View {
         Group {
-            if let uiImage = selectedImage ?? cachedUIImage ?? (cachedAvatarData.isEmpty ? nil : UIImage(data: cachedAvatarData)) {
+            if let uiImage = selectedImage {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if let cachedImage = cachedUIImage {
+                Image(uiImage: cachedImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if !cachedAvatarData.isEmpty,
+                      let uiImage = UIImage(data: cachedAvatarData) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
             } else if let cachedImage = ImageCache.shared.getImage(forKey: userId) {
                 Image(uiImage: cachedImage)
-                    .resizable()
-                    .scaledToFill()
-            } else if !userAvatar.isEmpty,
-                      let imageData = Data(base64Encoded: userAvatar),
-                      let uiImage = UIImage(data: imageData) {
-                Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
             } else {
@@ -333,42 +370,37 @@ struct ProfileView: View {
         print("\n📱 当前用户信息:")
         print("  - 用户ID: \(userId)")
         print("  - 用户名: \(userName)")
-    }
-}
-
-struct AddFriendView: View {
-    @Environment(\.dismiss) var dismiss
-    @State private var username = ""
-    @State private var isSearching = false
-    @State private var showError = false
-    @State private var errorMessage = ""
-    
-    var body: some View {
-        NavigationView {
-            VStack {
-                TextField("输入用户名", text: $username)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .padding()
-                
-                Button("搜索并添加") {
-                    searchUser()
-                }
-                .disabled(username.isEmpty || isSearching)
-            }
-            .navigationTitle("添加好友")
-            .navigationBarItems(trailing: Button("取消") {
-                dismiss()
-            })
-            .alert("错误", isPresented: $showError) {
-                Button("确定", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
+        
+        // 加载在线状态
+        let db = Firestore.firestore()
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            if let data = snapshot?.data(),
+               let statusString = data["onlineStatus"] as? String,
+               let status = User.OnlineStatus(rawValue: statusString) {
+                selectedStatus = status
             }
         }
     }
     
-    private func searchUser() {
-        // 实现搜索用户逻辑
+    private func updateOnlineStatus(_ status: User.OnlineStatus) {
+        let db = Firestore.firestore()
+        db.collection("users").document(userId)
+            .updateData([
+                "onlineStatus": status.rawValue,
+                "lastStatusUpdate": FieldValue.serverTimestamp()
+            ]) { error in
+                if let error = error {
+                    print("Error updating status: \(error)")
+                }
+            }
+    }
+    
+    private func clearCache() {
+        cachedAvatarData = Data()
+        localAvatarData = nil
+        selectedImage = nil
+        cachedUIImage = nil
+        ImageCache.shared.removeImage(forKey: userId)
     }
 }
 
@@ -416,5 +448,9 @@ class ImageCache {
     
     func getImage(forKey key: String) -> UIImage? {
         return cache.object(forKey: key as NSString)
+    }
+    
+    func removeImage(forKey key: String) {
+        cache.removeObject(forKey: key as NSString)
     }
 } 
