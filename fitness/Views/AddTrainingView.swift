@@ -4,10 +4,12 @@ import CoreHaptics
 
 struct AddTrainingView: View {
     let date: Date
+    let defaultBodyPart: String
     @Environment(\.dismiss) private var dismiss
     @AppStorage("userId") private var userId: String = ""
     
-    @State private var filterBodyPart: String  // 改名为 filterBodyPart，表示这只是筛选用
+    @State private var selectedBodyPart: String
+    @State private var filterBodyPart: String
     @State private var selectedExercise: Exercise? = nil
     @State private var duration = ""
     @State private var sets = 1  // 组数
@@ -42,15 +44,17 @@ struct AddTrainingView: View {
     @State private var isCompleting = false
     @State private var showSuccessOverlay = false
     
-    init(date: Date, onTrainingAdded: @escaping () -> Void) {
+    init(date: Date, defaultBodyPart: String = "", onTrainingAdded: @escaping () -> Void) {
         self.date = date
+        self.defaultBodyPart = defaultBodyPart
         self.onTrainingAdded = onTrainingAdded
         
-        // 初始化筛选部位为"全部"，不使用今日训练部位
-        _filterBodyPart = State(initialValue: "全部")
+        // 初始化状态变量
+        _selectedBodyPart = State(initialValue: defaultBodyPart)
+        _filterBodyPart = State(initialValue: defaultBodyPart.isEmpty ? "全部" : defaultBodyPart)
         
         print("📅 初始化训练视图 - 日期: \(date)")
-        print("🔍 初始筛选部位: 全部")
+        print("🔍 初始筛选部位: \(filterBodyPart)")
     }
     
     private var filteredExercises: [Exercise] {

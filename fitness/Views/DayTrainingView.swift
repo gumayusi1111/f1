@@ -191,7 +191,7 @@ struct DayTrainingView: View {
                 bodyPartSelectionSheet
             }
             .sheet(isPresented: $showAddTraining) {
-                AddTrainingView(date: date) {
+                AddTrainingView(date: date, defaultBodyPart: selectedBodyPart) {
                     // 训练添加完成的回调
                 }
             }
