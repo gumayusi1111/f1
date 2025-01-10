@@ -107,12 +107,12 @@ struct FriendRankingView: View {
         return users
     }
     
-    private func loadFriendRankings() {
+    private func loadFriendRankings(forceRefresh: Bool = false) {
         print("\n========== 加载好友排行榜 ==========")
         isLoading = true
         
-        // 1. 先尝试从缓存加载
-        if !isRefreshing, let cachedUsers = loadFromCache() {
+        // 只有在非强制刷新时才使用缓存
+        if !forceRefresh, !isRefreshing, let cachedUsers = loadFromCache() {
             self.friends = cachedUsers
             self.isLoading = false
             print("✅ 使用缓存数据")
@@ -158,9 +158,12 @@ struct FriendRankingView: View {
                 self.friends = rankedUsers
                 self.sortFriends()
                 self.isLoading = false
+                self.isRefreshing = false
+                // 更新最后刷新时间
                 self.lastRefreshTime = Date()
-                self.saveToCache(rankedUsers)  // 保存到缓存
+                self.saveToCache(rankedUsers)
                 print("✅ 排行榜加载完成，共 \(rankedUsers.count) 位好友")
+                print("📅 更新最后刷新时间: \(self.formatLastRefreshTime())")
             }
         }
     }
@@ -299,13 +302,25 @@ struct FriendRankingView: View {
     }
     
     private func refreshRankings() async {
+        // 显示刷新动画
+        isRefreshing = true
+        
         if !canRefresh() {
+            // 如果在一分钟内，只显示动画
+            print("⚠️ 刷新太频繁，使用缓存数据")
+            // 短暂延迟以显示刷新动画
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
+            isRefreshing = false
             showRefreshLimitAlert = true
             return
         }
         
+        // 超过一分钟，从数据库同步
+        print("\n🔄 开始同步排行榜数据...")
         await MainActor.run {
-            loadFriendRankings()
+            isRefreshing = true
+            // 强制从数据库加载新数据
+            loadFriendRankings(forceRefresh: true)
         }
     }
 }
