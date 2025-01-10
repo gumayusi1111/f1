@@ -170,39 +170,77 @@ struct FriendListView: View {
     }
     
     private func showFriendDetails(_ friend: User) {
+        // 在显示详情页面前，先清除之前的缓存
+        clearFriendCache(friend)
         selectedFriend = friend
     }
     
-    private func loadFriendDetails(_ friendIds: [String]) {
-        print("\n开始加载好友详细信息...")
-        print("好友ID列表: \(friendIds)")
+    private func clearFriendCache(_ friend: User) {
+        var updatedFriend = friend
+        updatedFriend.cachedWorkoutDays = nil
+        updatedFriend.cachedMaxConsecutiveDays = nil
+        updatedFriend.cachedMostFrequentBodyPart = nil
+        updatedFriend.cachedMostFrequentWorkoutTime = nil
+        updatedFriend.cachedWorkoutTags = nil
         
+        // 更新本地好友列表中的缓存状态
+        if let index = friends.firstIndex(where: { $0.id == friend.id }) {
+            friends[index] = updatedFriend
+        }
+        
+        selectedFriend = updatedFriend
+    }
+    
+    private func loadFriendDetails(_ friendIds: [String]) {
+        // 开始加载时间
+        let startTime = Date()
+        print("\n📱 开始加载好友列表 [\(Date().formatted(.dateTime))]")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("🔍 待加载好友: \(friendIds.count) 个")
+        print("📋 ID列表:")
+        friendIds.enumerated().forEach { index, id in
+            print("  \(index + 1). \(id)")
+        }
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
         let db = Firestore.firestore()
         let group = DispatchGroup()
         var loadedFriends: [User] = []
+        var loadingProgress: [String: Bool] = [:] // 记录每个好友的加载状态
+        var loadingErrors: [String: String] = [:] // 记录加载错误
         
+        // 初始化加载状态
+        friendIds.forEach { loadingProgress[$0] = false }
+
         for friendId in friendIds {
             group.enter()
-            print("正在加载好友ID: \(friendId)")
+            print("\n⏳ 开始加载好友 [\(friendId)]...")
             
             db.collection("users").document(friendId).getDocument { snapshot, error in
                 defer { group.leave() }
                 
                 if let error = error {
-                    print("❌ 加载好友信息失败: \(error.localizedDescription)")
+                    print("❌ 加载失败 [\(friendId)]: \(error.localizedDescription)")
+                    loadingErrors[friendId] = error.localizedDescription
                     return
                 }
                 
                 do {
                     if var friend = try snapshot?.data(as: User.self) {
                         friend.id = snapshot?.documentID ?? ""
-                        print("✅ 成功加载好友: \(friend.username), ID: \(friend.id)")
                         loadedFriends.append(friend)
+                        loadingProgress[friendId] = true
+                        print("✅ 加载成功 [\(friendId)]:")
+                        print("  - 用户名: \(friend.username)")
+                        print("  - 在线状态: \(friend.onlineStatus)")
+                        if let lastUpdate = friend.lastStatusUpdate {
+                            print("  - 最后更新: \(lastUpdate.formatted())")
+                        }
                     }
                 } catch {
-                    print("❌ 解码失败: \(error.localizedDescription)")
+                    print("⚠️ 解析失败 [\(friendId)]: \(error.localizedDescription)")
                     
-                    // 尝试手动创建用户对象
+                    // 尝试手动解析
                     if let data = snapshot?.data(),
                        let name = data["name"] as? String {
                         let friend = User(
@@ -213,26 +251,52 @@ struct FriendListView: View {
                             lastStatusUpdate: (data["lastStatusUpdate"] as? Timestamp)?.dateValue(),
                             friendIds: data["friendIds"] as? [String] ?? []
                         )
-                        print("✅ 手动创建好友: \(friend.username), ID: \(friend.id)")
                         loadedFriends.append(friend)
+                        loadingProgress[friendId] = true
+                        print("🔄 手动解析成功 [\(friendId)]")
                     }
                 }
             }
         }
         
         group.notify(queue: .main) {
+            // 计算加载时间
+            let loadTime = Date().timeIntervalSince(startTime)
+            
+            print("\n📊 加载完成报告 [\(Date().formatted(.dateTime))]")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("⏱️ 总耗时: \(String(format: "%.2f", loadTime))秒")
+            print("📈 加载统计:")
+            print("  - 总计划: \(friendIds.count)")
+            print("  - 成功: \(loadedFriends.count)")
+            print("  - 失败: \(loadingErrors.count)")
+            
+            if !loadingErrors.isEmpty {
+                print("\n❌ 失败详情:")
+                loadingErrors.forEach { id, error in
+                    print("  - [\(id)]: \(error)")
+                }
+            }
+            
+            print("\n✅ 成功加载的好友:")
+            loadedFriends.forEach { friend in
+                print("  - \(friend.username) [\(friend.id)]")
+            }
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            
+            // 更新UI和缓存
             self.friends = loadedFriends
             self.isLoading = false
             self.isRefreshing = false
             self.isFirstLoading = false
             self.lastRefreshTime = Date()
             self.saveToCache(loadedFriends)
-            print("\n最终加载结果:")
-            print("- 成功加载好友数量: \(friends.count)")
-            print("📅 更新最后刷新时间: \(self.formatLastRefreshTime())")
-            friends.forEach { friend in
-                print("- 好友: \(friend.username), ID: \(friend.id)")
-            }
+            
+            // 缓存更新状态
+            print("\n💾 缓存状态更新:")
+            print("  - 更新时间: \(self.lastRefreshTime.formatted())")
+            print("  - 缓存数量: \(loadedFriends.count)条")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
         }
     }
 }
