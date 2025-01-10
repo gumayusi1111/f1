@@ -8,6 +8,7 @@ struct User: Identifiable, Codable {
     var onlineStatus: OnlineStatus = .offline
     var lastStatusUpdate: Date?
     var friendIds: [String] = []
+    var notifications: [Notification]?
     
     // 添加自定义初始化器
     init(id: String, username: String, avatar_base64: String? = nil, onlineStatus: OnlineStatus = .offline, lastStatusUpdate: Date? = nil, friendIds: [String] = []) {
@@ -48,6 +49,14 @@ struct User: Identifiable, Codable {
         case onlineStatus
         case lastStatusUpdate
         case friendIds
+    }
+    
+    struct Notification: Codable, Identifiable {
+        var id: String
+        var type: String
+        var fromUserId: String
+        var timestamp: Date
+        var isRead: Bool
     }
 }
 

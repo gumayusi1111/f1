@@ -57,10 +57,9 @@ struct FriendListView: View {
                 // 好友列表
                 List {
                     ForEach(friends) { friend in
-                        FriendRow(friend: friend)
-                            .onTapGesture {
-                                showFriendDetails(friend)
-                            }
+                        FriendRow(friend: friend, onTapFriend: {
+                            showFriendDetails(friend)
+                        })
                     }
                 }
                 .listStyle(.plain)
@@ -241,6 +240,105 @@ struct FriendListView: View {
 // 好友行视图
 struct FriendRow: View {
     let friend: User
+    let onTapFriend: () -> Void
+    @State private var isReminding = false
+    @State private var showReminderAlert = false
+    @State private var reminderMessage = ""
+    @State private var lastReminderTimes: [String: TimeInterval] = [:]
+    
+    // 在 onAppear 时加载保存的时间
+    private func loadSavedTimes() {
+        if let data = UserDefaults.standard.data(forKey: "lastReminderTime"),
+           let times = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
+            lastReminderTimes = times
+        }
+    }
+    
+    // 保存时间到 UserDefaults
+    private func saveTimes() {
+        if let data = try? JSONEncoder().encode(lastReminderTimes) {
+            UserDefaults.standard.set(data, forKey: "lastReminderTime")
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: 15) {
+            // 左侧内容区域（头像和信息）
+            Group {
+                // 头像
+                if let avatarData = Data(base64Encoded: friend.avatar_base64 ?? ""),
+                   let uiImage = UIImage(data: avatarData) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 50, height: 50)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                } else {
+                    Image(systemName: "person.circle.fill")
+                        .resizable()
+                        .frame(width: 50, height: 50)
+                        .foregroundColor(.gray.opacity(0.3))
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(friend.username)
+                        .font(.system(size: 16, weight: .semibold))
+                    
+                    Text("ID: \(friend.id)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    // 在线状态
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(friend.onlineStatus == .online ? Color.green : 
+                                 friend.onlineStatus == .away ? Color.yellow : Color.gray)
+                            .frame(width: 8, height: 8)
+                        
+                        Text(statusText(friend.onlineStatus))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+            }
+            .onTapGesture {
+                onTapFriend()
+            }
+            
+            // 右侧按钮区域
+            HStack(spacing: 8) {
+                // 催促训练按钮
+                Button(action: {
+                    handleWorkoutReminder()
+                }) {
+                    Image(systemName: isReminding ? "bell.fill" : "bell")
+                        .foregroundColor(isReminding ? .orange : .gray)
+                        .font(.system(size: 20))
+                        .frame(width: 44, height: 44)
+                }
+                .disabled(isReminding)
+                .alert("提醒", isPresented: $showReminderAlert) {
+                    Button("确定", role: .cancel) { }
+                } message: {
+                    Text(reminderMessage)
+                }
+                
+                // 箭头指示器
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.gray)
+                    .font(.system(size: 14))
+                    .frame(width: 20)
+            }
+        }
+        .padding(.vertical, 8)
+        .onAppear {
+            loadSavedTimes()
+        }
+    }
     
     private func statusText(_ status: User.OnlineStatus) -> String {
         switch status {
@@ -250,53 +348,67 @@ struct FriendRow: View {
         }
     }
     
-    var body: some View {
-        HStack(spacing: 15) {
-            // 头像
-            if let avatarData = Data(base64Encoded: friend.avatar_base64 ?? ""),
-               let uiImage = UIImage(data: avatarData) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 50, height: 50)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-            } else {
-                Image(systemName: "person.circle.fill")
-                    .resizable()
-                    .frame(width: 50, height: 50)
-                    .foregroundColor(.gray.opacity(0.3))
+    private func handleWorkoutReminder() {
+        // 检查发送频率限制
+        if let lastTime = lastReminderTimes[friend.id] {
+            let timeInterval = Date().timeIntervalSince1970 - lastTime
+            if timeInterval < 24 * 60 * 60 { // 24小时内
+                reminderMessage = "今天已经提醒过了,明天再来吧"
+                showReminderAlert = true
+                return
             }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(friend.username)
-                    .font(.system(size: 16, weight: .semibold))
-                
-                Text("ID: \(friend.id)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                // 在线状态
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(friend.onlineStatus == .online ? Color.green : 
-                             friend.onlineStatus == .away ? Color.yellow : Color.gray)
-                        .frame(width: 8, height: 8)
+        }
+        
+        // 发送提醒
+        sendWorkoutReminder()
+        
+        // 添加震动反馈
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+        
+        // 更新最后提醒时间
+        lastReminderTimes[friend.id] = Date().timeIntervalSince1970
+        saveTimes() // 保存到 UserDefaults
+        
+        // 显示成功提示
+        reminderMessage = "已发送训练提醒"
+        showReminderAlert = true
+    }
+    
+    private func sendWorkoutReminder() {
+        withAnimation {
+            isReminding = true
+        }
+        
+        let db = Firestore.firestore()
+        let notification: [String: Any] = [
+            "type": "workout_reminder",
+            "fromUserId": UserDefaults.standard.string(forKey: "userId") ?? "",
+            "timestamp": Timestamp(),
+            "isRead": false,
+            "message": "该去运动啦!" // 可以添加自定义消息
+        ]
+        
+        db.collection("users").document(friend.id)
+            .collection("notifications").addDocument(data: notification) { error in
+                if error == nil {
+                    print("✅ 成功发送训练提醒")
                     
-                    Text(statusText(friend.onlineStatus))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    // 3秒后重置按钮状态
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        withAnimation {
+                            isReminding = false
+                        }
+                    }
+                } else {
+                    // 发送失败处理
+                    reminderMessage = "发送失败,请稍后重试"
+                    showReminderAlert = true
+                    withAnimation {
+                        isReminding = false
+                    }
                 }
             }
-            
-            Spacer()
-            
-            Image(systemName: "chevron.right")
-                .foregroundColor(.gray)
-                .font(.system(size: 14))
-        }
-        .padding(.vertical, 8)
     }
 }
 
