@@ -23,11 +23,13 @@ struct ProfileView: View {
     @State private var cachedUIImage: UIImage?
     @State private var selectedStatus: User.OnlineStatus = .offline
     
+    @State private var navigationPath = NavigationPath()
+    
     // 1. 添加新的持久化存储键
     private let AVATAR_CACHE_KEY = "userAvatarCache_"
     
     var body: some View {
-        NavigationView {
+        NavigationStack(path: $navigationPath) {
             List {
                 Section("个人信息") {
                     HStack {
@@ -80,8 +82,8 @@ struct ProfileView: View {
                 }
                 
                 Section("社交") {
-                    NavigationLink {
-                        AddFriendView()
+                    Button {
+                        navigationPath.append("addFriend")
                     } label: {
                         HStack {
                             Text("添加好友")
@@ -90,8 +92,8 @@ struct ProfileView: View {
                         }
                     }
                     
-                    NavigationLink {
-                        FriendListView()
+                    Button {
+                        navigationPath.append("friendList")
                     } label: {
                         HStack {
                             Text("好友列表")
@@ -100,8 +102,8 @@ struct ProfileView: View {
                         }
                     }
                     
-                    NavigationLink {
-                        FriendRequestsView()
+                    Button {
+                        navigationPath.append("friendRequests")
                     } label: {
                         HStack {
                             Text("好友请求")
@@ -110,8 +112,8 @@ struct ProfileView: View {
                         }
                     }
                     
-                    NavigationLink {
-                        FriendRankingView()
+                    Button {
+                        navigationPath.append("friendRanking")
                     } label: {
                         HStack {
                             Text("好友排行")
@@ -136,6 +138,20 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("个人中心")
+            .navigationDestination(for: String.self) { route in
+                switch route {
+                case "addFriend":
+                    AddFriendView()
+                case "friendList":
+                    FriendListView()
+                case "friendRequests":
+                    FriendRequestsView()
+                case "friendRanking":
+                    FriendRankingView()
+                default:
+                    EmptyView()
+                }
+            }
             .alert("确认退出", isPresented: $showLogoutAlert) {
                 Button("取消", role: .cancel) { }
                 Button("退出", role: .destructive) {
@@ -158,6 +174,7 @@ struct ProfileView: View {
                 print("\n========== 进入个人中心页面 ==========")
                 loadAvatar()  // 加载头像
                 loadUserInfo()  // 加载用户信息
+                navigationPath.removeLast(navigationPath.count)
             }
         }
         .sheet(isPresented: $showingImagePicker) {
