@@ -242,7 +242,8 @@ struct WeightView: View {
                     }
                     .navigationTitle("体重记录")
                     .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
+                        // 删除或注释掉整个 ToolbarItem
+                        /* ToolbarItem(placement: .navigationBarTrailing) {
                             Menu {
                                 Button(action: { showingAddSheet = true }) {
                                     Label("添加记录", systemImage: "plus")
@@ -260,12 +261,11 @@ struct WeightView: View {
                                 
                                 Divider()
                                 
-                                // 添加测试通知按钮
                                 Button(action: testNotifications) {
                                     Label("测试喝水通知", systemImage: "drop.circle")
                                 }
                                 Button(action: testWeightNotifications) {
-                                    Label("测试体重通知", systemImage: "scalemass.fill")  // 改用 scalemass.fill 替代 scale.circle
+                                    Label("测试体重通知", systemImage: "scalemass.fill")
                                 }
                                 
                                 Button(action: generateLocalTestData) {
@@ -287,7 +287,7 @@ struct WeightView: View {
                                 }
                                 .foregroundColor(.blue)
                             }
-                        }
+                        } */
                     }
                     .sheet(isPresented: $showingAddSheet) {
                         addWeightSheet
