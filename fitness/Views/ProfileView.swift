@@ -109,6 +109,16 @@ struct ProfileView: View {
                             Image(systemName: "person.2.circle")
                         }
                     }
+                    
+                    NavigationLink {
+                        FriendRankingView()
+                    } label: {
+                        HStack {
+                            Text("好友排行")
+                            Spacer()
+                            Image(systemName: "chart.bar.fill")
+                        }
+                    }
                 }
                 
                 Section {
