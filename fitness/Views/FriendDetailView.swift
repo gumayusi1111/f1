@@ -438,12 +438,14 @@ struct FriendDetailView: View {
             let mostFrequentPart = bodyPartsCount.max(by: { $0.value < $1.value })?.key ?? "未知"
             
             // 计算平均训练时间
-            let calendar = Calendar.current
-            let averageHour = trainingTimes.reduce(0.0) { sum, date in
-                return sum + Double(calendar.component(.hour, from: date))
-            } / Double(trainingTimes.count)
-            let adjustedHour = Int((averageHour + 2.0).rounded())
-            let timeString = String(format: "%02d:00", adjustedHour)
+            let timeString = trainingTimes.isEmpty ? "未知" : {
+                let calendar = Calendar.current
+                let averageHour = trainingTimes.reduce(0.0) { sum, date in
+                    return sum + Double(calendar.component(.hour, from: date))
+                } / Double(trainingTimes.count)
+                let adjustedHour = Int((averageHour + 2.0).rounded())
+                return String(format: "%02d:00", adjustedHour)
+            }()
             
             print("\n📊 数据统计结果:")
             print("  - 总训练天数: \(allWorkoutDays.count)")
