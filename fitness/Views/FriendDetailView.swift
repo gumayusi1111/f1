@@ -29,9 +29,46 @@ struct FriendDetailView: View {
                     weeklyActivitySection
                         .frame(maxWidth: .infinity)
                     
-                    // 4. 标签部分
-                    tagsSection
-                        .frame(maxWidth: .infinity)
+                    // 4. 运动标签
+                    VStack(spacing: 16) {
+                        Text("运动标签")
+                            .font(.title2)
+                            .bold()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        if workoutTags.isEmpty {
+                            Text("暂无标签")
+                                .foregroundColor(.secondary)
+                                .font(.subheadline)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 12)
+                        } else {
+                            LazyVGrid(columns: [
+                                GridItem(.flexible()),
+                                GridItem(.flexible())
+                            ], spacing: 12) {
+                                ForEach(workoutTags, id: \.self) { tag in
+                                    Text(tag)
+                                        .font(.subheadline)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .frame(maxWidth: .infinity)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 20)
+                                                .fill(tagColor(for: tag).opacity(0.1))
+                                        )
+                                        .foregroundColor(tagColor(for: tag))
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Color(.systemBackground))
+                            .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
+                    )
+                    .frame(maxWidth: .infinity)
                 }
                 
                 // 5. 操作按钮部分
@@ -212,58 +249,6 @@ struct FriendDetailView: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
         )
-    }
-    
-    // 修改标签部分的视图
-    private var tagsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("运动标签")
-                .font(.title2)
-                .bold()
-                .frame(maxWidth: .infinity, alignment: .leading)
-            
-            if workoutTags.isEmpty {
-                Text("暂无标签")
-                    .foregroundColor(.secondary)
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 12)
-            } else {
-                FlowLayout(spacing: 8) {
-                    ForEach(workoutTags, id: \.self) { tag in
-                        Text(tag)
-                            .font(.subheadline)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(tagColor(for: tag).opacity(0.1))
-                            )
-                            .foregroundColor(tagColor(for: tag))
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
-        )
-        .frame(maxWidth: .infinity)
-    }
-    
-    // 标签颜色
-    private func tagColor(for tag: String) -> Color {
-        if tag.contains("王") || tag.contains("狂人") {
-            return .orange
-        } else if tag.contains("达人") {
-            return .blue
-        } else if tag.contains("新") {
-            return .green
-        } else {
-            return .purple
-        }
     }
     
     // 改进的操作按钮
@@ -466,6 +451,42 @@ struct FriendDetailView: View {
             print("  - 常练部位: \(mostFrequentPart)")
             print("  - 常用时段: \(timeString)")
             
+            // 生成标签
+            var newTags: [String] = []
+            
+            // 基于总训练天数的标签
+            if allWorkoutDays.count >= 100 {
+                newTags.append("训练百日王")
+            } else if allWorkoutDays.count >= 30 {
+                newTags.append("训练月度达人")
+            } else if allWorkoutDays.count >= 7 {
+                newTags.append("训练周常客")
+            } else if allWorkoutDays.count > 0 {
+                newTags.append("训练新手")
+            }
+            
+            // 基于连续训练的标签
+            if maxConsecutive >= 30 {
+                newTags.append("铁人意志")
+            } else if maxConsecutive >= 7 {
+                newTags.append("坚持不懈")
+            } else if maxConsecutive >= 3 {
+                newTags.append("初显毅力")
+            }
+            
+            // 基于训练部位的标签
+            if let (mostPart, count) = bodyPartsCount.max(by: { $0.value < $1.value }) {
+                if count >= 20 {
+                    newTags.append("\(mostPart)狂人")
+                } else if count >= 10 {
+                    newTags.append("\(mostPart)达人")
+                } else if count >= 5 {
+                    newTags.append("\(mostPart)爱好者")
+                }
+            }
+            
+            self.workoutTags = newTags
+            
             // 更新UI
             DispatchQueue.main.async {
                 self.workoutDays = sortedDates
@@ -473,13 +494,6 @@ struct FriendDetailView: View {
                 self.mostFrequentBodyPart = mostFrequentPart
                 self.mostFrequentWorkoutTime = timeString
                 self.isLoadingWorkouts = false
-                
-                // 生成训练标签
-                self.generateWorkoutTags(
-                    totalDays: sortedDates.count,
-                    consecutive: maxConsecutive,
-                    bodyParts: bodyPartsCount
-                )
             }
             
             print("\n⏱️ 加载完成")
@@ -510,55 +524,17 @@ struct FriendDetailView: View {
         return maxConsecutive
     }
     
-    // 修改生成标签的逻辑
-    private func generateWorkoutTags(totalDays: Int, consecutive: Int, bodyParts: [String: Int]) {
-        var newTags: [String] = []
-        
-        print("\n🏷 生成训练标签:")
-        print("  - 总天数: \(totalDays)")
-        print("  - 连续天数: \(consecutive)")
-        print("  - 训练部位统计:")
-        bodyParts.forEach { part, count in
-            print("    · \(part): \(count)次")
+    // 3. 添加标签颜色函数
+    private func tagColor(for tag: String) -> Color {
+        if tag.contains("王") || tag.contains("狂人") {
+            return .orange
+        } else if tag.contains("达人") {
+            return .blue
+        } else if tag.contains("新") {
+            return .green
+        } else {
+            return .purple
         }
-        
-        // 基于总训练天数的标签
-        if totalDays >= 100 {
-            newTags.append("训练百日王")
-        } else if totalDays >= 30 {
-            newTags.append("训练月度达人")
-        } else if totalDays >= 7 {
-            newTags.append("训练周常客")
-        } else if totalDays > 0 {
-            newTags.append("训练新手")
-        }
-        
-        // 基于连续训练的标签
-        if consecutive >= 30 {
-            newTags.append("铁人意志")
-        } else if consecutive >= 7 {
-            newTags.append("坚持不懈")
-        } else if consecutive >= 3 {
-            newTags.append("初显毅力")
-        }
-        
-        // 基于训练部位的标签
-        if let (mostPart, count) = bodyParts.max(by: { $0.value < $1.value }) {
-            if count >= 20 {
-                newTags.append("\(mostPart)狂人")
-            } else if count >= 10 {
-                newTags.append("\(mostPart)达人")
-            } else if count >= 5 {
-                newTags.append("\(mostPart)爱好者")
-            }
-        }
-        
-        print("\n📌 生成标签结果:")
-        newTags.forEach { tag in
-            print("  - \(tag)")
-        }
-        
-        workoutTags = newTags
     }
 }
 
