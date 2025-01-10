@@ -46,13 +46,16 @@ struct AddExerciseView: View {
     @State private var isOffline = false
     @AppStorage("pendingExercises") private var pendingExercisesData: Data = Data()
     
+    // 添加状态用于存储已有项目
+    @State private var existingExercises: [Exercise] = []
+    
     init(onExerciseAdded: @escaping (Exercise) -> Void) {
         self.onExerciseAdded = onExerciseAdded
     }
     
     // MARK: - Computed Properties
     private var isFormValid: Bool {
-        // 添加长度验证
+        // 1. 检查基本条件
         guard !name.isEmpty && 
               name.count >= 2 && 
               name.count <= 30 && 
@@ -60,7 +63,27 @@ struct AddExerciseView: View {
               selectedUnit != nil else {
             return false
         }
-        return nameError == nil  // 确保没有错误
+        
+        // 2. 检查是否有错误
+        if let error = validateName(name) {
+            print("❌ 表单验证失败: \(error)")
+            return false
+        }
+        
+        // 3. 检查是否是系统预设
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let isSystemPreset = existingExercises.contains { exercise in
+            exercise.isSystemPreset && 
+            exercise.name.lowercased() == trimmedName.lowercased()
+        }
+        
+        if isSystemPreset {
+            print("❌ 表单验证失败: 系统预设项目")
+            return false
+        }
+        
+        print("✅ 表单验证通过")
+        return true
     }
     
     var body: some View {
@@ -81,21 +104,15 @@ struct AddExerciseView: View {
                                     print("\n========== 名称输入验证 ==========")
                                     print("📝 输入内容: \($0)")
                                     
-                                    // 实时验证
-                                    if $0.isEmpty {
-                                        self.nameError = "请输入项目名称"
-                                        print("❌ 验证失败: 名称为空")
-                                    } else if $0.count < 2 {
-                                        self.nameError = "名称至少需要2个字符"
-                                        print("❌ 验证失败: 名称过短 (长度: \($0.count))")
-                                    } else if $0.count > 30 {
-                                        self.nameError = "名称不能超过30个字符"
-                                        print("❌ 验证失败: 名称过长 (长度: \($0.count))")
+                                    // 使用完整的验证函数
+                                    self.nameError = validateName($0)
+                                    
+                                    // 打印验证结果
+                                    if let error = self.nameError {
+                                        print("❌ 验证失败: \(error)")
                                     } else {
-                                        self.nameError = nil
                                         print("✅ 验证通过")
                                     }
-                                    print("当前错误状态: \(String(describing: self.nameError))")
                                     print("===================================\n")
                                 }
                             ))
@@ -265,6 +282,10 @@ struct AddExerciseView: View {
             } message: {
                 Text(errorMessage)
             }
+        }
+        .task {
+            // 视图加载时获取已有项目
+            await loadExistingExercises()
         }
     }
     
@@ -456,6 +477,143 @@ struct AddExerciseView: View {
             print("========== 检查异常结束 ==========\n")
             return false
         }
+    }
+    
+    // 修改加载函数
+    private func loadExistingExercises() async {
+        print("\n========== 开始加载项目 ==========")
+        let db = Firestore.firestore()
+        
+        do {
+            // 1. 加载用户自定义项目
+            print("📱 加载用户自定义项目...")
+            let userSnapshot = try await db.collection("users")
+                .document(userId)
+                .collection("exercises")
+                .getDocuments()
+            
+            let userExercises = userSnapshot.documents.compactMap { doc -> Exercise? in
+                return Exercise(dictionary: doc.data(), id: doc.documentID)
+            }
+            print("✅ 用户项目数量: \(userExercises.count)")
+            
+            // 2. 加载系统预设项目
+            print("\n📱 加载系统预设项目...")
+            let systemSnapshot = try await db.collection("systemExercises")
+                .getDocuments()
+            
+            let systemExercises = systemSnapshot.documents.compactMap { doc -> Exercise? in
+                return Exercise(dictionary: doc.data(), id: doc.documentID)
+            }
+            print("✅ 系统预设数量: \(systemExercises.count)")
+            
+            // 3. 合并两个列表
+            existingExercises = userExercises + systemExercises
+            
+            // 4. 打印详细统计
+            print("\n📊 项目统计:")
+            print("- 用户自定义: \(userExercises.count)")
+            print("- 系统预设: \(systemExercises.count)")
+            print("- 总计: \(existingExercises.count)")
+            
+            // 5. 按类别统计
+            let categoryCounts = Dictionary(grouping: existingExercises) { $0.category }
+                .mapValues { $0.count }
+            print("\n📊 类别统计:")
+            for (category, count) in categoryCounts.sorted(by: { $0.key < $1.key }) {
+                print("- \(category): \(count)")
+            }
+            
+            print("✅ 加载完成")
+        } catch {
+            print("❌ 加载失败: \(error.localizedDescription)")
+        }
+        print("========== 加载结束 ==========\n")
+    }
+    
+    // 添加辅助函数用于检查是否是系统预设
+    private func isSystemPreset(_ name: String) -> Bool {
+        return existingExercises.contains { exercise in
+            exercise.isSystemPreset && exercise.name.lowercased() == name.lowercased()
+        }
+    }
+    
+    // 修改名称验证逻辑
+    private func validateName(_ name: String) -> String? {
+        print("\n========== 开始完整验证 ==========")
+        print("📝 当前名称: \(name)")
+        print("📊 existingExercises 数组长度: \(existingExercises.count)")
+        
+        // 打印所有系统预设项目
+        print("\n🔍 系统预设项目列表:")
+        existingExercises.filter { $0.isSystemPreset }.forEach { exercise in
+            print("- \(exercise.name) (isSystemPreset: \(exercise.isSystemPreset))")
+        }
+        
+        // 基本验证
+        if name.isEmpty {
+            print("❌ 验证失败: 名称为空")
+            return "请输入项目名称"
+        }
+        
+        if name.count < 2 {
+            print("❌ 验证失败: 名称过短")
+            return "名称至少需要2个字符"
+        }
+        
+        if name.count > 30 {
+            print("❌ 验证失败: 名称过长")
+            return "名称不能超过30个字符"
+        }
+        
+        // 重复验证
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        print("\n🔍 开始重复检查:")
+        print("- 处理后的名称: \(trimmedName)")
+        
+        // 先检查是否是系统预设
+        let systemPresetMatches = existingExercises.filter { exercise in
+            let isMatch = exercise.isSystemPreset && 
+                         exercise.name.lowercased() == trimmedName.lowercased()
+            if isMatch {
+                print("⚠️ 发现系统预设匹配: \(exercise.name) (ID: \(exercise.id))")
+            }
+            return isMatch
+        }
+        
+        if !systemPresetMatches.isEmpty {
+            print("❌ 验证失败: 与系统预设重复")
+            print("- 匹配的系统预设数量: \(systemPresetMatches.count)")
+            systemPresetMatches.forEach { exercise in
+                print("- 匹配项目: \(exercise.name)")
+            }
+            print("========== 验证结束 ==========\n")
+            return "该名称为系统预设项目，请使用其他名称"
+        }
+        
+        // 再检查用户自定义项目
+        let userMatches = existingExercises.filter { exercise in
+            let isMatch = !exercise.isSystemPreset && 
+                         exercise.name.lowercased() == trimmedName.lowercased()
+            if isMatch {
+                print("⚠️ 发现用户项目匹配: \(exercise.name) (ID: \(exercise.id))")
+            }
+            return isMatch
+        }
+        
+        print("\n📊 检查结果:")
+        print("- 总项目数: \(existingExercises.count)")
+        print("- 系统预设匹配数: \(systemPresetMatches.count)")
+        print("- 用户项目匹配数: \(userMatches.count)")
+        
+        if !userMatches.isEmpty {
+            print("❌ 验证失败: 名称重复")
+            return "该项目名称已存在"
+        }
+        
+        print("✅ 验证通过")
+        print("========== 验证结束 ==========\n")
+        return nil
     }
 }
 
